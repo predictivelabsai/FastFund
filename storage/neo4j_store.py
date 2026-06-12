@@ -30,6 +30,7 @@ from .base import Storage, utcnow
 load_dotenv()
 
 _FULLTEXT_INDEX = "versionText"
+_VECTOR_INDEX = "chunkEmbedding"
 
 
 class Neo4jStore(Storage):
@@ -457,6 +458,52 @@ class Neo4jStore(Storage):
                 idx=_FULLTEXT_INDEX, q=lucene, lim=limit,
             ).data()
             return rows
+
+    # ── Vector retrieval ───────────────────────────────────────────────────
+    def ensure_vector_index(self, dim: int) -> None:
+        ddl = (f"CREATE VECTOR INDEX {_VECTOR_INDEX} IF NOT EXISTS "
+               "FOR (c:Chunk) ON (c.embedding) OPTIONS {indexConfig: "
+               f"{{`vector.dimensions`: {int(dim)}, "
+               "`vector.similarity_function`: 'cosine'}}")
+        with self._session() as s:
+            try:
+                s.run(ddl).consume()
+            except Exception as e:  # noqa: BLE001 — 4.x has no vector index; optional
+                print(f"[neo4j] vector index unavailable: {e}")
+
+    def index_version_chunks(self, version_id, document_id, chunks) -> int:
+        with self._session() as s:
+            return s.write_transaction(
+                self._index_version_chunks, version_id, document_id, chunks)
+
+    @staticmethod
+    def _index_version_chunks(tx, version_id, document_id, chunks) -> int:
+        tx.run("MATCH (v:Version {uid:$vid})-[:HAS_CHUNK]->(c:Chunk) "
+               "DETACH DELETE c", vid=version_id)
+        if not chunks:
+            return 0
+        payload = [{"ord": o, "text": t, "emb": e} for (o, t, e) in chunks]
+        tx.run("MATCH (v:Version {uid:$vid}) UNWIND $chunks AS ch "
+               "CREATE (v)-[:HAS_CHUNK]->(:Chunk {document_id:$did, "
+               "version_id:$vid, ord:ch.ord, text:ch.text, embedding:ch.emb})",
+               vid=version_id, did=document_id, chunks=payload)
+        return len(payload)
+
+    def vector_search_chunks(self, query_vector, limit: int = 8) -> list[dict]:
+        with self._session() as s:
+            return s.run(
+                "CALL db.index.vector.queryNodes($idx, $k, $vec) YIELD node AS c, score "
+                "MATCH (d:Document)-[:CURRENT_VERSION]->(:Version)-[:HAS_CHUNK]->(c) "
+                "RETURN d.uid AS document_id, d.doc_key AS doc_key, d.title AS title, "
+                "d.jurisdiction_code AS jurisdiction_code, d.doc_type AS doc_type, "
+                "d.url AS url, d.reference AS reference, c.text AS chunk_text, score "
+                "ORDER BY score DESC LIMIT $lim",
+                idx=_VECTOR_INDEX, k=max(limit * 4, limit), vec=query_vector, lim=limit,
+            ).data()
+
+    def count_chunks(self) -> int:
+        with self._session() as s:
+            return s.run("MATCH (c:Chunk) RETURN count(c) AS n").single()["n"]
 
 
 # Neo4j drops properties set to null (it has no null storage), so a node read

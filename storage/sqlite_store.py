@@ -122,6 +122,15 @@ class SqliteStore(Storage):
             role          TEXT DEFAULT 'user',
             created_at    TEXT DEFAULT (datetime('now'))
         )""",
+        # Chunk-level embeddings for vector retrieval (embedding = JSON float list).
+        """CREATE TABLE IF NOT EXISTS version_chunks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_id  INTEGER NOT NULL,
+            document_id INTEGER NOT NULL,
+            ord         INTEGER NOT NULL,
+            text        TEXT,
+            embedding   TEXT
+        )""",
     ]
 
     INDEXES = [
@@ -133,6 +142,7 @@ class SqliteStore(Storage):
         "CREATE INDEX IF NOT EXISTS idx_changes_doc ON document_changes(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_changes_detected ON document_changes(detected_at)",
         "CREATE INDEX IF NOT EXISTS idx_citations_doc ON citations(document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chunks_version ON version_chunks(version_id)",
     ]
 
     def init_db(self) -> None:
@@ -486,3 +496,47 @@ class SqliteStore(Storage):
                 scored.append({**dict(r), "score": float(score)})
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]
+
+    # ── Vector retrieval (brute-force cosine; the relational fallback) ──────
+    def ensure_vector_index(self, dim: int) -> None:
+        # No native vector index in SQLite; the table + brute-force scan suffice.
+        pass
+
+    def index_version_chunks(self, version_id, document_id, chunks) -> int:
+        with self.conn() as c:
+            c.execute(text("DELETE FROM version_chunks WHERE version_id = :v"),
+                      {"v": version_id})
+            for ordn, txt, emb in chunks:
+                c.execute(text(
+                    "INSERT INTO version_chunks (version_id, document_id, ord, text, embedding) "
+                    "VALUES (:v, :d, :o, :t, :e)"),
+                    {"v": version_id, "d": document_id, "o": ordn,
+                     "t": txt, "e": json.dumps(emb)})
+        return len(chunks)
+
+    def vector_search_chunks(self, query_vector, limit: int = 8) -> list[dict]:
+        import math
+        q = query_vector
+        qn = math.sqrt(sum(x * x for x in q)) or 1.0
+        with self.conn() as c:
+            rows = c.execute(text(
+                "SELECT vc.text AS chunk_text, vc.embedding AS embedding, "
+                "       d.id AS document_id, d.doc_key, d.title, d.jurisdiction_code, "
+                "       d.doc_type, d.url, d.reference "
+                "FROM version_chunks vc "
+                "JOIN tax_documents d ON d.current_version_id = vc.version_id "
+                "WHERE d.status='active'")).mappings().all()
+        scored = []
+        for r in rows:
+            e = json.loads(r["embedding"])
+            dot = sum(a * b for a, b in zip(q, e))
+            en = math.sqrt(sum(x * x for x in e)) or 1.0
+            score = dot / (qn * en)
+            row = {k: r[k] for k in r.keys() if k != "embedding"}
+            scored.append({**row, "score": float(score)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:limit]
+
+    def count_chunks(self) -> int:
+        with self.conn() as c:
+            return c.execute(text("SELECT COUNT(*) FROM version_chunks")).scalar() or 0

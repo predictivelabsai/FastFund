@@ -1,19 +1,21 @@
 #!/usr/bin/env python3.12
 """Run TaxHub agent evals with an LLM judge (deepeval).
 
-For each ground-truth row we run the named agent to produce an answer, then a
-deepeval ``GEval`` correctness metric — judged by xAI Grok — scores the answer
-against the expected answer. status = PASS if score >= THRESHOLD else FAIL.
+For each ground-truth row we run the named agent — with a chosen retriever — to
+produce an answer, then a deepeval ``GEval`` correctness metric (judged by xAI
+Grok) scores it against the expected answer. status = PASS if score >= THRESHOLD.
 
 Inputs:  evals/ground_truth.csv  (id, question, expected_answer, agent_type)
-Outputs: eval-results/eval_<UTC timestamp>.csv
+Outputs: eval-results/eval_<retriever>_<UTC>.csv
          columns: question, expected_answer, ai_answer, agent_type, status, score, reason
 
-Usage:   python3.12 evals/run_evals.py [path/to/ground_truth.csv]
+Usage:
+    python3.12 evals/run_evals.py                       # retriever from RAG_RETRIEVER env (default hybrid)
+    python3.12 evals/run_evals.py --retriever vector    # fulltext | vector | hybrid
+    python3.12 evals/run_evals.py path/to/gt.csv --retriever fulltext
 
-The agents query the active storage backend (AuraDB when DATA_STORAGE=neo4j) and
-Grok via the same code path as the deployed /ask route, so this is an
-end-to-end eval of the real system, not a mock.
+The agents query the live backend (AuraDB when DATA_STORAGE=neo4j) and Grok via
+the same code path as the deployed /ask route — an end-to-end eval, not a mock.
 """
 from __future__ import annotations
 
@@ -23,7 +25,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Quieter, network-light deepeval.
 os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 os.environ.setdefault("DEEPEVAL_DISABLE_PROGRESS_BAR", "YES")
 
@@ -36,15 +37,10 @@ import taxrag         # noqa: E402
 THRESHOLD = 0.5
 
 
-# ── Agents under test ───────────────────────────────────────────────────────
-def run_graph_rag(question: str) -> str:
-    """The /ask graph-RAG agent: full-text seed -> graph expansion -> Grok."""
-    return taxrag.answer(question).get("answer", "")
-
-
-AGENTS = {
-    "graph_rag": run_graph_rag,
-}
+# ── Agent under test ────────────────────────────────────────────────────────
+def run_graph_rag(question: str, retriever_name: str) -> str:
+    """The /ask graph-RAG agent with an explicit retriever."""
+    return taxrag.answer(question, retriever=taxrag.get_retriever(retriever_name)).get("answer", "")
 
 
 # ── Grok as the deepeval judge model ────────────────────────────────────────
@@ -60,7 +56,6 @@ def build_judge():
 
         def generate(self, prompt: str, schema=None):
             if schema is not None:
-                # deepeval asks for structured (score/reason/steps) output.
                 try:
                     return self._llm.with_structured_output(schema).invoke(prompt)
                 except Exception:
@@ -90,9 +85,9 @@ def build_metric(judge):
         criteria=(
             "Determine whether the 'actual output' is factually correct and "
             "consistent with the 'expected output' for the given tax-law "
-            "question. Reward answers that capture the key facts of the "
-            "expected output even if worded differently or with extra detail; "
-            "penalise contradictions, missing key facts, or hallucinated law."
+            "question. Reward answers that capture the key facts of the expected "
+            "output even if worded differently or with extra detail; penalise "
+            "contradictions, missing key facts, or hallucinated law."
         ),
         evaluation_params=[
             LLMTestCaseParams.INPUT,
@@ -104,63 +99,81 @@ def build_metric(judge):
     )
 
 
-def main():
-    gt_path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "evals" / "ground_truth.csv"
-    rows = list(csv.DictReader(gt_path.open()))
-    if not rows:
-        sys.exit(f"No ground-truth rows in {gt_path}")
-
-    if not taxai.ai_available():
-        sys.exit("XAI_API_KEY not set — the judge and agents need Grok. Check .env.")
-
+def judge_verdict(metric, question: str, expected: str, ai_answer: str):
+    """Return (status, score, reason) for one answer."""
     from deepeval.test_case import LLMTestCase
+    try:
+        tc = LLMTestCase(input=question, actual_output=ai_answer, expected_output=expected)
+        metric.measure(tc)
+        score = round(float(metric.score or 0.0), 3)
+        status = "PASS" if score >= THRESHOLD else "FAIL"
+        return status, score, (metric.reason or "").replace("\n", " ").strip()
+    except Exception as e:  # noqa: BLE001
+        return "ERROR", 0.0, f"{type(e).__name__}: {e}"
 
-    judge = build_judge()
-    metric = build_metric(judge)
 
+def run_suite(rows, retriever_name, metric, verdict_cache=None):
+    """Run every row through the agent (with retriever_name) + judge."""
     results = []
-    print(f"Running {len(rows)} evals (threshold={THRESHOLD})...\n")
     for r in rows:
         q, expected = r["question"], r["expected_answer"]
-        agent_type = r.get("agent_type", "graph_rag")
-        agent = AGENTS.get(agent_type)
-        if agent is None:
-            ai_answer, status, score, reason = "", "ERROR", 0.0, f"unknown agent_type {agent_type}"
+        ai_answer = run_graph_rag(q, retriever_name)
+        key = (q, ai_answer)
+        if verdict_cache is not None and key in verdict_cache:
+            status, score, reason = verdict_cache[key]
         else:
-            try:
-                ai_answer = agent(q)
-                tc = LLMTestCase(input=q, actual_output=ai_answer, expected_output=expected)
-                metric.measure(tc)
-                score = round(float(metric.score or 0.0), 3)
-                status = "PASS" if score >= THRESHOLD else "FAIL"
-                reason = (metric.reason or "").replace("\n", " ").strip()
-            except Exception as e:  # noqa: BLE001
-                ai_answer = locals().get("ai_answer", "")
-                status, score, reason = "ERROR", 0.0, f"{type(e).__name__}: {e}"
-
+            status, score, reason = judge_verdict(metric, q, expected, ai_answer)
+            if verdict_cache is not None:
+                verdict_cache[key] = (status, score, reason)
         results.append({
             "question": q, "expected_answer": expected, "ai_answer": ai_answer,
-            "agent_type": agent_type, "status": status, "score": score, "reason": reason,
+            "agent_type": f"graph_rag:{retriever_name}",
+            "status": status, "score": score, "reason": reason,
         })
-        print(f"  [{status}] score={score:<5} {q[:62]}")
+        print(f"  [{status}] score={score:<5} {q[:60]}")
+    return results
 
-    # Write results CSV.
+
+def write_results(results, retriever_name, stamp):
     out_dir = ROOT / "eval-results"
     out_dir.mkdir(exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = out_dir / f"eval_{stamp}.csv"
+    out_path = out_dir / f"eval_{retriever_name}_{stamp}.csv"
     cols = ["question", "expected_answer", "ai_answer", "agent_type", "status", "score", "reason"]
     with out_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(results)
+    return out_path
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    retriever = os.environ.get("RAG_RETRIEVER", "hybrid")
+    if "--retriever" in args:
+        i = args.index("--retriever")
+        retriever = args[i + 1]
+        del args[i:i + 2]
+    gt_path = Path(args[0]) if args else ROOT / "evals" / "ground_truth.csv"
+
+    rows = list(csv.DictReader(gt_path.open()))
+    if not rows:
+        sys.exit(f"No ground-truth rows in {gt_path}")
+    if not taxai.ai_available():
+        sys.exit("XAI_API_KEY not set — judge and agents need Grok. Check .env.")
+
+    metric = build_metric(build_judge())
+    print(f"Running {len(rows)} evals | retriever={retriever} | threshold={THRESHOLD}\n")
+    results = run_suite(rows, retriever, metric)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_path = write_results(results, retriever, stamp)
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     failed = sum(1 for r in results if r["status"] == "FAIL")
     errored = sum(1 for r in results if r["status"] == "ERROR")
     print(f"\n{'='*60}")
-    print(f"PASS {passed}/{len(results)}  |  FAIL {failed}  |  ERROR {errored}"
-          f"  |  pass rate {passed/len(results):.0%}")
+    print(f"retriever={retriever}  PASS {passed}/{len(results)}  FAIL {failed}  "
+          f"ERROR {errored}  pass rate {passed/len(results):.0%}")
     print(f"Results: {out_path.relative_to(ROOT)}")
 
 

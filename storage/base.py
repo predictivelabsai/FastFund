@@ -174,3 +174,30 @@ class Storage(abc.ABC):
         reference, version_no, text_content, score}``. Backends without a
         full-text index fall back to a substring scan.
         """
+
+    # ── Vector retrieval (chunk-level embeddings) ──────────────────────────
+    # Optional semantic layer: each version's text is split into passage
+    # chunks, each embedded, and stored for nearest-neighbour search. Powers
+    # the vector and hybrid retrievers; the full-text path works without it.
+
+    @abc.abstractmethod
+    def ensure_vector_index(self, dim: int) -> None:
+        """Create the chunk vector index for ``dim``-dimensional embeddings
+        (cosine). No-op if it already exists; relational backends may no-op."""
+
+    @abc.abstractmethod
+    def index_version_chunks(self, version_id: int, document_id: int,
+                             chunks: list[tuple[int, str, list[float]]]) -> int:
+        """Replace the stored chunks for ``version_id`` with ``chunks``
+        (``(ord, text, embedding)`` tuples). Idempotent. Returns the count."""
+
+    @abc.abstractmethod
+    def vector_search_chunks(self, query_vector: list[float],
+                             limit: int = 8) -> list[dict]:
+        """Nearest chunks to ``query_vector`` whose version is its document's
+        CURRENT version. Each row: ``{document_id, doc_key, title,
+        jurisdiction_code, doc_type, url, reference, chunk_text, score}``."""
+
+    @abc.abstractmethod
+    def count_chunks(self) -> int:
+        """Number of stored chunk embeddings (0 ⇒ vector retrieval unavailable)."""
