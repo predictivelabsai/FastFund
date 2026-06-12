@@ -7,6 +7,10 @@ the **primary law** it interprets.
 
 Deployed at **taxhub.predictivelabs.ai**.
 
+> **Architecture & diagrams:** see [`docs/architecture_readme.md`](docs/architecture_readme.md)
+> for component/data-flow/graph-model Mermaid diagrams, the full environment-variable
+> reference, and AuraDB deployment steps.
+
 ## What it does
 
 - **Scrapes** legislation, guidance/circulars, gazettes and treaties from
