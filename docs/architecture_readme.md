@@ -237,8 +237,8 @@ Copy `.env.example` → `.env` (gitignored). All variables:
 ```bash
 scripts/neo4j_local.sh setup     # one-time: build config + set initial password
 scripts/neo4j_local.sh start     # bolt://localhost:7687, http://localhost:7474
-python3.12 migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
-python3.12 -m uvicorn taxapp:app --port 5011
+python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
+python3.12 -m uvicorn web.app:app --port 5011
 ```
 
 Run on SQLite instead with `DATA_STORAGE=sqlite` (no Neo4j needed).
@@ -302,7 +302,7 @@ Steps:
    ```
 4. Backfill from an existing SQLite corpus, if any:
    ```bash
-   DB_URL=sqlite:///taxhub.db python3.12 migrate_sqlite_to_neo4j.py --wipe
+   DB_URL=sqlite:///taxhub.db python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe
    ```
 5. Schedule the scraper (e.g. Coolify cron) to build change history over time.
 

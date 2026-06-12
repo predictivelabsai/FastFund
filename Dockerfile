@@ -32,4 +32,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5011/health').read()"
 
 # Web viewer. The scraper runs separately (cron / `docker compose run scrape`).
-CMD ["python", "-m", "uvicorn", "taxapp:app", "--host", "0.0.0.0", "--port", "5011"]
+CMD ["python", "-m", "uvicorn", "web.app:app", "--host", "0.0.0.0", "--port", "5011"]

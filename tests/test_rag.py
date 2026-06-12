@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 
 import storage
-import taxai
-import taxrag
+from rag import llm as taxai
+from rag import retrieval as taxrag
 from storage.sqlite_store import SqliteStore
 
 

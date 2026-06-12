@@ -38,16 +38,18 @@ Deployed at **taxhub.predictivelabs.ai**.
 
 ```
 config/tax_sources.yaml      document catalogue (per jurisdiction → source → doc)
-taxfetch.py                  fetch (http/browser) + extract (html/pdf) + hash
+ingest/fetch.py              fetch (http/browser) + extract (html/pdf) + hash
+ingest/cli.py                orchestrator CLI  (python -m ingest.cli)
 storage/base.py              Storage interface (backend-neutral)
-storage/sqlite_store.py        ├─ SQLite/Postgres backend
-storage/neo4j_store.py         └─ Neo4j graph backend
-taxstore.py                  compat shim → active backend (import taxstore as store)
-taxai.py                     Grok change summaries + citation extraction
-taxrag.py                    graph-RAG retrieval + Q&A
-scrape_tax.py                orchestrator CLI
-taxapp.py                    FastHTML web viewer (+ /ask)
-migrate_sqlite_to_neo4j.py   backfill the graph from SQLite
+storage/sqlite_store.py        ├─ SQLite/Postgres backend  (+ brute-force vectors)
+storage/neo4j_store.py         └─ Neo4j graph backend      (+ native vector index)
+taxstore.py                  store facade → active backend (import taxstore as store)
+rag/llm.py                   Grok change summaries + citation extraction
+rag/embeddings.py            chunking + local embeddings (fastembed) for vectors
+rag/retrieval.py             graph-RAG retrievers: fulltext / vector / hybrid + Q&A
+web/app.py                   FastHTML web viewer (+ /ask)   (uvicorn web.app:app)
+scripts/embed_backfill.py    chunk + embed every current version (enables vectors)
+scripts/migrate_sqlite_to_neo4j.py   backfill the graph from SQLite
 scripts/neo4j_local.sh       run a local, user-owned Neo4j for dev
 ```
 
@@ -90,14 +92,14 @@ touching answer generation. Embeddings are deferred for now.
 ## Usage
 
 ```bash
-python3.12 scrape_tax.py --list                 # show configured documents
-python3.12 scrape_tax.py --jurisdiction JE      # scrape one jurisdiction
-python3.12 scrape_tax.py --all                  # scrape everything
-python3.12 scrape_tax.py --all --no-ai          # skip Grok summaries
-python3.12 scrape_tax.py --changes              # recent changes (CLI)
-python3.12 scrape_tax.py --stats                # DB summary
+python3.12 -m ingest.cli --list                 # show configured documents
+python3.12 -m ingest.cli --jurisdiction JE      # scrape one jurisdiction
+python3.12 -m ingest.cli --all                  # scrape everything
+python3.12 -m ingest.cli --all --no-ai          # skip Grok summaries
+python3.12 -m ingest.cli --changes              # recent changes (CLI)
+python3.12 -m ingest.cli --stats                # DB summary
 
-python3.12 -m uvicorn taxapp:app --port 8000    # web viewer
+python3.12 -m uvicorn web.app:app --port 8000    # web viewer
 ```
 
 ## Configuration (`.env`)
@@ -126,7 +128,7 @@ A self-contained, user-owned instance (no sudo, separate from any system Neo4j):
 ```bash
 scripts/neo4j_local.sh setup     # one-time: build config + set initial password
 scripts/neo4j_local.sh start     # http://localhost:7474, bolt://localhost:7687
-python3.12 migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
+python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
 ```
 
 `NEO4J_PASSWORD` (default `taxhub-dev-password`) is read from the environment at

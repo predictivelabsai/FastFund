@@ -55,7 +55,7 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER}
     volumes:
       - taxhub-data:/app/data
-    entrypoint: ["python", "scrape_tax.py"]
+    entrypoint: ["python", "-m", "ingest.cli"]
     command: ["--all"]
 
   # Self-hosted Neo4j for environments not using AuraDB. Opt-in:

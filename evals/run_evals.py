@@ -31,8 +31,8 @@ os.environ.setdefault("DEEPEVAL_DISABLE_PROGRESS_BAR", "YES")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import taxai          # noqa: E402
-import taxrag         # noqa: E402
+from rag import llm as taxai  # noqa: E402
+from rag import retrieval as taxrag  # noqa: E402
 
 THRESHOLD = 0.5
 
