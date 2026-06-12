@@ -87,6 +87,24 @@ The tests use `httpx.Client` with streaming for SSE chat endpoints. Each chat te
 
 ---
 
+### Agent evals (deepeval, LLM judge)
+
+End-to-end quality evals of the agents against a ground-truth set, judged by Grok
+via deepeval `GEval`. Same code path as the deployed `/ask` route (live AuraDB +
+Grok). See `evals/README.md`.
+
+```bash
+pip install --user --break-system-packages deepeval   # once
+python3.12 evals/run_evals.py                          # -> eval-results/eval_<UTC>.csv
+```
+
+- Ground truth: `evals/ground_truth.csv` (`id, question, expected_answer, agent_type`).
+- Results: `eval-results/*.csv` (`question, expected_answer, ai_answer, agent_type, status, score, reason`); `status = PASS` if judge score ≥ 0.5.
+- `agent_type` dispatches the answering agent (`graph_rag` = `/ask`); add agents in `run_evals.py`.
+- FAILs are usually retrieval gaps ("context does not contain…") — keep them; they track real capability. Don't tune ground truth to inflate pass rate.
+
+---
+
 ## 3. Playwright MCP Regression Tests
 
 Browser-based UI regression tests using Playwright MCP. Every UI change MUST be verified before reporting complete.
