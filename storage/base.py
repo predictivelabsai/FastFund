@@ -201,3 +201,46 @@ class Storage(abc.ABC):
     @abc.abstractmethod
     def count_chunks(self) -> int:
         """Number of stored chunk embeddings (0 ⇒ vector retrieval unavailable)."""
+
+    # ── Tax forms (the form-finder corpus) ─────────────────────────────────
+    # A Form is a fileable tax document (return/notification/declaration) with
+    # a stored PDF. Distinct from legislation/guidance Documents, but lives in
+    # the same graph under its jurisdiction, classified by category + type for
+    # the Forms Tree (Jurisdiction → category → form_type → Form).
+
+    @abc.abstractmethod
+    def upsert_form(self, form: dict) -> int:
+        """Insert/update a form by natural key (jurisdiction_code, form_key).
+        Fields: jurisdiction_code, category, form_type, form_key, title,
+        authority, url, file_path, year, who_files, deadline, frequency,
+        summary. Returns the form id."""
+
+    @abc.abstractmethod
+    def get_form(self, form_id: int) -> dict | None:
+        ...
+
+    @abc.abstractmethod
+    def list_forms(self, jurisdiction_code: str | None = None,
+                   category: str | None = None, limit: int = 500) -> list[dict]:
+        """Forms, optionally filtered by jurisdiction and/or category."""
+
+    @abc.abstractmethod
+    def search_forms(self, query: str, limit: int = 10) -> list[dict]:
+        """Keyword search over form title/category/type for the form-finder."""
+
+    # ── Chat history (assistant sessions) ──────────────────────────────────
+    @abc.abstractmethod
+    def create_chat_session(self, user_email: str, title: str = "") -> int:
+        ...
+
+    @abc.abstractmethod
+    def add_chat_message(self, session_id: int, role: str, content: str) -> None:
+        ...
+
+    @abc.abstractmethod
+    def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
+        """Recent sessions for a user: ``{id, title, updated_at}`` newest first."""
+
+    @abc.abstractmethod
+    def get_chat_messages(self, session_id: int) -> list[dict]:
+        """Messages for a session in order: ``{role, content, created_at}``."""

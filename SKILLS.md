@@ -87,6 +87,31 @@ The tests use `httpx.Client` with streaming for SSE chat endpoints. Each chat te
 
 ---
 
+### v2 — form-finder, agents, 3-pane UI
+
+Layout: `rag/` (llm, embeddings, retrieval) · `ingest/` (fetch, cli, forms, scrapers/) ·
+`agents/` (orchestrator + tools) · `web/` (3-pane app) · `storage/` · `taxstore.py` facade.
+
+```bash
+# Tax forms (form-finder corpus)
+python3.12 -m ingest.cli --forms                 # scrape + download form PDFs (config/tax_forms.yaml)
+python3.12 -m ingest.cli --forms --no-download   # record form metadata only (no network)
+
+# Retrieval / embeddings
+python3.12 scripts/embed_backfill.py             # chunk + embed current versions (enables vector/hybrid)
+#   RAG_RETRIEVER = hybrid (default) | vector | fulltext
+
+# Agents (LangGraph orchestrator over Grok; routes to document_agent / law_agent / metadata_agent / changes_agent)
+python3.12 -c "from agents import orchestrator as o; print(o.answer('which form for Cayman economic substance?'))"
+
+# Web (3-pane: nav + Forms Tree + Shortcuts | AI chat (SSE) + cards | changes feed / PDF viewer)
+python3.12 -m uvicorn web.app:app --port 5011
+```
+
+Shortcuts in chat: `form:` (find form) · `law:` (graph-RAG) · `forms:` (list by jurisdiction) ·
+`changes:` · `find:`. Chat history persists in the active backend (AuraDB). Forms tree taxonomy:
+Jurisdiction → category → form_type → form (click opens the PDF in the right pane).
+
 ### Agent evals (deepeval, LLM judge)
 
 End-to-end quality evals of the agents against a ground-truth set, judged by Grok

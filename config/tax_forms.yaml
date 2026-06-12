@@ -1,0 +1,167 @@
+# Tax forms catalogue — the form-finder corpus.
+#
+# The forms scraper visits each form's `source` page, discovers PDF links
+# (optionally filtered by `match`), downloads the latest, and records a Form.
+# A form may instead give a direct `url` to a PDF. `category` + `form_type`
+# drive the Forms Tree taxonomy: Jurisdiction -> category -> form_type -> Form.
+#
+# Categories: corporate_tax | economic_substance | aeoi | beneficial_ownership
+#             | partnership | personal_employer | gst_vat | fund
+# Form types: return | notification | declaration | registration | report | guidance
+
+jurisdictions:
+  JE:
+    name: Jersey
+    authority: Revenue Jersey
+    forms:
+      - form_key: corporate_tax_return
+        title: Company Tax Return (Jersey)
+        category: corporate_tax
+        form_type: return
+        who_files: Companies tax-resident in Jersey or with a Jersey permanent establishment
+        frequency: annual
+        deadline: "30 November of the year following the year of assessment"
+        source: https://www.gov.je/TaxesMoney/IncomeTax/Companies/Pages/CompanyTaxReturns.aspx
+        match: ".pdf"
+      - form_key: economic_substance_return
+        title: Economic Substance — Company Return (Jersey)
+        category: economic_substance
+        form_type: return
+        who_files: Resident companies carrying on a relevant activity
+        frequency: annual
+        deadline: "12 months after the end of the financial period"
+        source: https://www.gov.je/TaxesMoney/IncomeTax/Companies/Pages/EconomicSubstance.aspx
+        match: ".pdf"
+      - form_key: fatca_crs_report
+        title: FATCA / CRS Report (Jersey AEOI)
+        category: aeoi
+        form_type: report
+        who_files: Jersey reporting financial institutions
+        frequency: annual
+        deadline: "30 June"
+        source: https://www.gov.je/TaxesMoney/IncomeTax/Individuals/InternationalAgreements/Pages/index.aspx
+        match: ".pdf"
+
+  GG:
+    name: Guernsey
+    authority: Guernsey Revenue Service
+    forms:
+      - form_key: corporate_tax_return
+        title: Company Income Tax Return (Guernsey)
+        category: corporate_tax
+        form_type: return
+        who_files: Guernsey-resident companies (incorporates the economic substance declaration)
+        frequency: annual
+        deadline: "30 November of the year following the year of charge"
+        source: https://www.gov.gg/companyreturns
+        match: ".pdf"
+      - form_key: crs_fatca
+        title: CRS / FATCA Reporting (Guernsey)
+        category: aeoi
+        form_type: report
+        who_files: Guernsey financial institutions
+        frequency: annual
+        deadline: "30 June"
+        source: https://www.gov.gg/aeoi
+        match: ".pdf"
+
+  LU:
+    name: Luxembourg
+    authority: Administration des contributions directes (ACD)
+    forms:
+      - form_key: corporate_income_tax_return
+        title: Corporate Income Tax Return — Form 500 (Luxembourg)
+        category: corporate_tax
+        form_type: return
+        who_files: Luxembourg resident companies (incl. SOPARFI)
+        frequency: annual
+        deadline: "31 December (extension to year-end commonly applied)"
+        source: https://impotsdirects.public.lu/fr/formulaires/revenu_collectivites.html
+        match: ".pdf"
+      - form_key: crs_fatca
+        title: CRS / FATCA Reporting (Luxembourg)
+        category: aeoi
+        form_type: report
+        who_files: Luxembourg reporting financial institutions
+        frequency: annual
+        deadline: "30 June"
+        source: https://impotsdirects.public.lu/fr/echanges_electroniques/CRS-NCD.html
+        match: ".pdf"
+
+  IE:
+    name: Ireland
+    authority: Revenue Commissioners
+    forms:
+      - form_key: form_ct1
+        title: Corporation Tax Return — Form CT1 (Ireland)
+        category: corporate_tax
+        form_type: return
+        who_files: Irish resident companies and non-resident companies trading through a branch
+        frequency: annual
+        deadline: "23rd of the 9th month after the accounting period end"
+        source: https://www.revenue.ie/en/companies-and-charities/corporation-tax-for-companies/corporation-tax/index.aspx
+        match: ".pdf"
+      - form_key: fatca_crs
+        title: FATCA / CRS Reporting (Ireland)
+        category: aeoi
+        form_type: report
+        who_files: Irish financial institutions
+        frequency: annual
+        deadline: "30 June"
+        source: https://www.revenue.ie/en/companies-and-charities/financial-services/aeoi/index.aspx
+        match: ".pdf"
+
+  KY:
+    name: Cayman Islands
+    authority: Department for International Tax Cooperation (DITC)
+    forms:
+      - form_key: economic_substance_notification
+        title: Economic Substance Notification (Cayman)
+        category: economic_substance
+        form_type: notification
+        who_files: All Cayman entities (filed with the annual return to the Registrar)
+        frequency: annual
+        deadline: "With the annual return (by 31 January)"
+        source: https://www.ditc.ky/economic-substance/es-portal-documents/
+        match: ".pdf"
+      - form_key: economic_substance_return
+        title: Economic Substance Return (Cayman)
+        category: economic_substance
+        form_type: return
+        who_files: Relevant entities carrying on a relevant activity
+        frequency: annual
+        deadline: "12 months after the end of the relevant financial year"
+        source: https://www.ditc.ky/economic-substance/es-portal-documents/
+        match: ".pdf"
+      - form_key: crs_fatca
+        title: CRS / FATCA Reporting (Cayman)
+        category: aeoi
+        form_type: report
+        who_files: Cayman reporting financial institutions
+        frequency: annual
+        deadline: "31 July (CRS/FATCA report)"
+        source: https://www.ditc.ky/ditc-portal/
+        match: ".pdf"
+
+  VG:
+    name: British Virgin Islands
+    authority: BVI International Tax Authority (ITA)
+    forms:
+      - form_key: economic_substance_filing
+        title: Economic Substance Filing (BVI, via BOSS)
+        category: economic_substance
+        form_type: report
+        who_files: BVI legal entities carrying on a relevant activity
+        frequency: annual
+        deadline: "Within 6 months of the end of the financial period"
+        source: https://bviita.vg/economic-substance
+        match: ".pdf"
+      - form_key: fatca_crs
+        title: FATCA / CRS Reporting (BVI)
+        category: aeoi
+        form_type: report
+        who_files: BVI financial institutions
+        frequency: annual
+        deadline: "31 May (registration) / 1 June (reporting)"
+        source: https://bviita.vg/fatca-crs
+        match: ".pdf"

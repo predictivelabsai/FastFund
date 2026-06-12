@@ -505,6 +505,113 @@ class Neo4jStore(Storage):
         with self._session() as s:
             return s.run("MATCH (c:Chunk) RETURN count(c) AS n").single()["n"]
 
+    # ── Tax forms ──────────────────────────────────────────────────────────
+    _FORM_PROPS = ("jurisdiction_code", "category", "form_type", "form_key", "title",
+                   "authority", "url", "file_path", "year", "who_files", "deadline",
+                   "frequency", "summary")
+    _FORM_RETURN = (
+        "f.uid AS id, f.jurisdiction_code AS jurisdiction_code, f.category AS category, "
+        "f.form_type AS form_type, f.form_key AS form_key, f.title AS title, "
+        "f.authority AS authority, f.url AS url, f.file_path AS file_path, "
+        "f.year AS year, f.who_files AS who_files, f.deadline AS deadline, "
+        "f.frequency AS frequency, f.summary AS summary")
+
+    def upsert_form(self, form: dict) -> int:
+        # Only provided keys → partial upserts aren't destructive.
+        props = {k: form[k] for k in self._FORM_PROPS if k in form}
+        with self._session() as s:
+            return s.write_transaction(self._upsert_form, props)
+
+    @classmethod
+    def _upsert_form(cls, tx, props) -> int:
+        jc, fk, now = props["jurisdiction_code"], props["form_key"], utcnow()
+        ex = tx.run("MATCH (f:Form {jurisdiction_code:$jc, form_key:$fk}) "
+                    "RETURN f.uid AS uid", jc=jc, fk=fk).single()
+        if ex:
+            tx.run("MATCH (f:Form {uid:$uid}) SET f += $props, f.last_seen=$now",
+                   uid=ex["uid"], props=props, now=now)
+            return ex["uid"]
+        uid = cls._next_id(tx, "Form")
+        tx.run("MATCH (j:Jurisdiction {code:$jc}) "
+               "CREATE (f:Form {uid:$uid, first_seen:$now, last_seen:$now}) "
+               "SET f += $props CREATE (j)-[:HAS_FORM]->(f)",
+               jc=jc, uid=uid, props=props, now=now)
+        return uid
+
+    def get_form(self, form_id: int) -> dict | None:
+        with self._session() as s:
+            r = s.run(f"MATCH (f:Form {{uid:$i}}) RETURN {self._FORM_RETURN}",
+                      i=form_id).single()
+            return dict(r) if r else None
+
+    def list_forms(self, jurisdiction_code=None, category=None, limit=500) -> list[dict]:
+        where = []
+        p = {"lim": limit}
+        if jurisdiction_code:
+            where.append("f.jurisdiction_code=$jc"); p["jc"] = jurisdiction_code
+        if category:
+            where.append("f.category=$cat"); p["cat"] = category
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        with self._session() as s:
+            return s.run(
+                f"MATCH (f:Form){clause} RETURN {self._FORM_RETURN} "
+                "ORDER BY f.jurisdiction_code, f.category, f.form_type, f.title "
+                "LIMIT $lim", **p).data()
+
+    def search_forms(self, query: str, limit: int = 10) -> list[dict]:
+        terms = [t for t in re.split(r"\W+", (query or "").lower()) if len(t) > 2]
+        if not terms:
+            return []
+        rows = self.list_forms(limit=2000)
+        scored = []
+        for r in rows:
+            hay = " ".join(str(r.get(k) or "") for k in
+                           ("title", "category", "form_type", "summary",
+                            "who_files", "jurisdiction_code")).lower()
+            score = sum(hay.count(t) for t in terms)
+            if score:
+                scored.append({**r, "score": float(score)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:limit]
+
+    # ── Chat history ───────────────────────────────────────────────────────
+    def create_chat_session(self, user_email: str, title: str = "") -> int:
+        with self._session() as s:
+            return s.write_transaction(self._create_chat_session, user_email, title)
+
+    @classmethod
+    def _create_chat_session(cls, tx, user_email, title) -> int:
+        uid = cls._next_id(tx, "ChatSession")
+        now = utcnow()
+        tx.run("CREATE (cs:ChatSession {uid:$uid, user_email:$e, title:$t, "
+               "created_at:$now, updated_at:$now})",
+               uid=uid, e=user_email, t=title or "New chat", now=now)
+        return uid
+
+    def add_chat_message(self, session_id: int, role: str, content: str) -> None:
+        now = utcnow()
+        with self._session() as s:
+            s.run("MATCH (cs:ChatSession {uid:$sid}) "
+                  "CREATE (cs)-[:HAS_MESSAGE]->(m:ChatMessage {role:$r, content:$c, created_at:$now}) "
+                  "SET cs.updated_at=$now",
+                  sid=session_id, r=role, c=content, now=now).consume()
+
+    def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
+        with self._session() as s:
+            return s.run(
+                "MATCH (cs:ChatSession {user_email:$e}) "
+                "RETURN cs.uid AS id, cs.title AS title, cs.updated_at AS updated_at "
+                "ORDER BY cs.updated_at DESC LIMIT $lim",
+                e=user_email, lim=limit).data()
+
+    def get_chat_messages(self, session_id: int) -> list[dict]:
+        with self._session() as s:
+            return s.run(
+                "MATCH (cs:ChatSession {uid:$sid})-[:HAS_MESSAGE]->(m:ChatMessage) "
+                "RETURN m.role AS role, m.content AS content, m.created_at AS created_at "
+                "ORDER BY m.created_at",
+                sid=session_id).data()
+
 
 # Neo4j drops properties set to null (it has no null storage), so a node read
 # back omits keys that were never set. The relational backend always returns the

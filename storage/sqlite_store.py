@@ -131,6 +131,40 @@ class SqliteStore(Storage):
             text        TEXT,
             embedding   TEXT
         )""",
+        # Tax forms (the form-finder corpus).
+        """CREATE TABLE IF NOT EXISTS tax_forms (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            jurisdiction_code TEXT NOT NULL,
+            category          TEXT,
+            form_type         TEXT,
+            form_key          TEXT NOT NULL,
+            title             TEXT,
+            authority         TEXT,
+            url               TEXT,
+            file_path         TEXT,
+            year              TEXT,
+            who_files         TEXT,
+            deadline          TEXT,
+            frequency         TEXT,
+            summary           TEXT,
+            first_seen        TEXT,
+            last_seen         TEXT,
+            UNIQUE(jurisdiction_code, form_key)
+        )""",
+        """CREATE TABLE IF NOT EXISTS chat_sessions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT,
+            title      TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS chat_messages (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            role       TEXT,
+            content    TEXT,
+            created_at TEXT
+        )""",
     ]
 
     INDEXES = [
@@ -143,6 +177,8 @@ class SqliteStore(Storage):
         "CREATE INDEX IF NOT EXISTS idx_changes_detected ON document_changes(detected_at)",
         "CREATE INDEX IF NOT EXISTS idx_citations_doc ON citations(document_id)",
         "CREATE INDEX IF NOT EXISTS idx_chunks_version ON version_chunks(version_id)",
+        "CREATE INDEX IF NOT EXISTS idx_forms_jur ON tax_forms(jurisdiction_code)",
+        "CREATE INDEX IF NOT EXISTS idx_forms_cat ON tax_forms(category)",
     ]
 
     def init_db(self) -> None:
@@ -540,3 +576,98 @@ class SqliteStore(Storage):
     def count_chunks(self) -> int:
         with self.conn() as c:
             return c.execute(text("SELECT COUNT(*) FROM version_chunks")).scalar() or 0
+
+    # ── Tax forms ──────────────────────────────────────────────────────────
+    _FORM_COLS = ("jurisdiction_code", "category", "form_type", "form_key", "title",
+                  "authority", "url", "file_path", "year", "who_files", "deadline",
+                  "frequency", "summary")
+
+    def upsert_form(self, form: dict) -> int:
+        now = utcnow()
+        # Only touch keys actually provided → partial upserts aren't destructive.
+        vals = {k: form[k] for k in self._FORM_COLS if k in form}
+        with self.conn() as c:
+            row = c.execute(text(
+                "SELECT id FROM tax_forms WHERE jurisdiction_code=:j AND form_key=:k"),
+                {"j": form["jurisdiction_code"], "k": form["form_key"]}).first()
+            if row:
+                upd = {k: v for k, v in vals.items()
+                       if k not in ("jurisdiction_code", "form_key")}
+                if upd:
+                    sets = ", ".join(f"{k}=:{k}" for k in upd)
+                    c.execute(text(f"UPDATE tax_forms SET {sets}, last_seen=:now WHERE id=:id"),
+                              {**upd, "now": now, "id": row[0]})
+                return row[0]
+            cols = ", ".join(vals)
+            ph = ", ".join(f":{k}" for k in vals)
+            res = c.execute(text(
+                f"INSERT INTO tax_forms ({cols}, first_seen, last_seen) "
+                f"VALUES ({ph}, :now, :now)"), {**vals, "now": now})
+            return res.lastrowid
+
+    def get_form(self, form_id: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT * FROM tax_forms WHERE id=:i"),
+                          {"i": form_id}).mappings().first()
+            return dict(r) if r else None
+
+    def list_forms(self, jurisdiction_code=None, category=None, limit=500) -> list[dict]:
+        q = "SELECT * FROM tax_forms WHERE 1=1"
+        p = {}
+        if jurisdiction_code:
+            q += " AND jurisdiction_code=:j"; p["j"] = jurisdiction_code
+        if category:
+            q += " AND category=:c"; p["c"] = category
+        q += " ORDER BY jurisdiction_code, category, form_type, title LIMIT :lim"
+        p["lim"] = limit
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(q), p).mappings().all()]
+
+    def search_forms(self, query: str, limit: int = 10) -> list[dict]:
+        terms = [t for t in re.split(r"\W+", (query or "").lower()) if len(t) > 2]
+        if not terms:
+            return []
+        with self.conn() as c:
+            rows = c.execute(text("SELECT * FROM tax_forms")).mappings().all()
+        scored = []
+        for r in rows:
+            hay = " ".join(str(r[k] or "") for k in
+                           ("title", "category", "form_type", "summary",
+                            "who_files", "jurisdiction_code")).lower()
+            score = sum(hay.count(t) for t in terms)
+            if score:
+                scored.append({**dict(r), "score": float(score)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:limit]
+
+    # ── Chat history ───────────────────────────────────────────────────────
+    def create_chat_session(self, user_email: str, title: str = "") -> int:
+        now = utcnow()
+        with self.conn() as c:
+            res = c.execute(text(
+                "INSERT INTO chat_sessions (user_email, title, created_at, updated_at) "
+                "VALUES (:e, :t, :now, :now)"),
+                {"e": user_email, "t": title or "New chat", "now": now})
+            return res.lastrowid
+
+    def add_chat_message(self, session_id: int, role: str, content: str) -> None:
+        now = utcnow()
+        with self.conn() as c:
+            c.execute(text("INSERT INTO chat_messages (session_id, role, content, created_at) "
+                           "VALUES (:s, :r, :c, :now)"),
+                      {"s": session_id, "r": role, "c": content, "now": now})
+            c.execute(text("UPDATE chat_sessions SET updated_at=:now WHERE id=:s"),
+                      {"now": now, "s": session_id})
+
+    def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT id, title, updated_at FROM chat_sessions WHERE user_email=:e "
+                "ORDER BY updated_at DESC LIMIT :lim"),
+                {"e": user_email, "lim": limit}).mappings().all()]
+
+    def get_chat_messages(self, session_id: int) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT role, content, created_at FROM chat_messages "
+                "WHERE session_id=:s ORDER BY id"), {"s": session_id}).mappings().all()]

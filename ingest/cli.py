@@ -176,9 +176,21 @@ def main():
     ap.add_argument("--list", action="store_true", help="List configured docs")
     ap.add_argument("--changes", action="store_true", help="Show recent changes")
     ap.add_argument("--stats", action="store_true", help="Show DB stats")
+    ap.add_argument("--forms", action="store_true",
+                    help="Scrape tax forms from config/tax_forms.yaml")
+    ap.add_argument("--no-download", action="store_true",
+                    help="With --forms: record form metadata only, skip PDF download")
     args = ap.parse_args()
 
     store.init_db()
+
+    if args.forms:
+        from ingest.forms import scrape_forms
+        summary = scrape_forms(jurisdiction=args.jurisdiction,
+                               download=not args.no_download)
+        print(f"\nForms: {summary}")
+        return
+
     cfg = load_config()
 
     if args.list:
