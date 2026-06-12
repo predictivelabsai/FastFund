@@ -1,0 +1,488 @@
+"""SQLite (SQLAlchemy) storage backend.
+
+The original, zero-infra backend: local dev and the first production deploy
+need no external service. The schema mirrors the scaffold's price-history
+pattern — a document has many immutable versions; an amendment appends a new
+version and records a change. Plain enough to point ``DB_URL`` at Postgres if
+volume ever demands it.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from contextlib import contextmanager
+
+from sqlalchemy import create_engine, text
+
+from .base import Storage, utcnow
+
+
+class SqliteStore(Storage):
+    def __init__(self, db_url: str | None = None):
+        self.db_url = db_url or os.environ.get("DB_URL", "sqlite:///taxhub.db")
+        # check_same_thread=False so the FastHTML app and CLI scrapers can share it.
+        connect_args = {"check_same_thread": False} if self.db_url.startswith("sqlite") else {}
+        self.engine = create_engine(self.db_url, future=True, connect_args=connect_args)
+
+    @contextmanager
+    def conn(self):
+        with self.engine.begin() as c:
+            if self.db_url.startswith("sqlite"):
+                c.execute(text("PRAGMA foreign_keys=ON"))
+                c.execute(text("PRAGMA journal_mode=WAL"))
+            yield c
+
+    # ── Schema ─────────────────────────────────────────────────────────────
+
+    DDL = [
+        """CREATE TABLE IF NOT EXISTS jurisdictions (
+            code        TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            region      TEXT,
+            authority   TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS tax_documents (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            jurisdiction_code  TEXT NOT NULL REFERENCES jurisdictions(code),
+            source             TEXT,
+            doc_type           TEXT NOT NULL,
+            doc_key            TEXT NOT NULL,
+            title              TEXT NOT NULL,
+            reference          TEXT,
+            url                TEXT NOT NULL UNIQUE,
+            format             TEXT DEFAULT 'html',
+            tags               TEXT,
+            current_version_id INTEGER,
+            current_hash       TEXT,
+            first_seen         TEXT,
+            last_checked       TEXT,
+            last_changed       TEXT,
+            check_count        INTEGER DEFAULT 0,
+            status             TEXT DEFAULT 'active',
+            last_error         TEXT,
+            UNIQUE(jurisdiction_code, doc_key)
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_versions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id        INTEGER NOT NULL REFERENCES tax_documents(id),
+            version_no         INTEGER NOT NULL,
+            content_hash       TEXT NOT NULL,
+            text_content       TEXT,
+            raw_path           TEXT,
+            byte_size          INTEGER,
+            char_count         INTEGER,
+            http_last_modified TEXT,
+            etag               TEXT,
+            fetched_at         TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_changes (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id     INTEGER NOT NULL REFERENCES tax_documents(id),
+            from_version_id INTEGER REFERENCES document_versions(id),
+            to_version_id   INTEGER NOT NULL REFERENCES document_versions(id),
+            change_type     TEXT NOT NULL,
+            added_chars     INTEGER DEFAULT 0,
+            removed_chars   INTEGER DEFAULT 0,
+            diff_text       TEXT,
+            ai_summary      TEXT,
+            ai_impact       TEXT,
+            ai_model        TEXT,
+            detected_at     TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS citations (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id        INTEGER NOT NULL REFERENCES tax_documents(id),
+            version_id         INTEGER REFERENCES document_versions(id),
+            cited_jurisdiction TEXT,
+            cited_instrument   TEXT,
+            cited_locator      TEXT,
+            snippet            TEXT,
+            created_at         TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS scrape_runs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            jurisdiction_code TEXT,
+            started_at        TEXT,
+            finished_at       TEXT,
+            docs_checked      INTEGER DEFAULT 0,
+            docs_new          INTEGER DEFAULT 0,
+            docs_changed      INTEGER DEFAULT 0,
+            docs_error        INTEGER DEFAULT 0,
+            status            TEXT DEFAULT 'running',
+            notes             TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            email         TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            name          TEXT,
+            role          TEXT DEFAULT 'user',
+            created_at    TEXT DEFAULT (datetime('now'))
+        )""",
+    ]
+
+    INDEXES = [
+        "CREATE INDEX IF NOT EXISTS idx_docs_jur ON tax_documents(jurisdiction_code)",
+        "CREATE INDEX IF NOT EXISTS idx_docs_type ON tax_documents(doc_type)",
+        "CREATE INDEX IF NOT EXISTS idx_docs_status ON tax_documents(status)",
+        "CREATE INDEX IF NOT EXISTS idx_versions_doc ON document_versions(document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_versions_hash ON document_versions(content_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_changes_doc ON document_changes(document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_changes_detected ON document_changes(detected_at)",
+        "CREATE INDEX IF NOT EXISTS idx_citations_doc ON citations(document_id)",
+    ]
+
+    def init_db(self) -> None:
+        with self.conn() as c:
+            for stmt in self.DDL:
+                c.execute(text(stmt))
+            for stmt in self.INDEXES:
+                c.execute(text(stmt))
+        self._seed_admin()
+
+    def _seed_admin(self) -> None:
+        import bcrypt
+
+        email = os.environ.get("ADMIN_EMAIL", "admin@jtgroup.com")
+        pw = os.environ.get("ADMIN_PASSWORD", "Funds2$2")
+        with self.conn() as c:
+            exists = c.execute(
+                text("SELECT 1 FROM users WHERE email = :e"), {"e": email}
+            ).fetchone()
+            if not exists:
+                pw_hash = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+                c.execute(
+                    text(
+                        "INSERT INTO users (email, password_hash, name, role) "
+                        "VALUES (:e, :p, :n, 'admin')"
+                    ),
+                    {"e": email, "p": pw_hash, "n": "JTC Admin"},
+                )
+
+    # ── Jurisdictions / documents (write) ──────────────────────────────────
+
+    def upsert_jurisdiction(self, code, name, region=None, authority=None) -> None:
+        with self.conn() as c:
+            c.execute(
+                text(
+                    "INSERT INTO jurisdictions (code, name, region, authority) "
+                    "VALUES (:code, :name, :region, :authority) "
+                    "ON CONFLICT(code) DO UPDATE SET name=:name, region=:region, authority=:authority"
+                ),
+                {"code": code, "name": name, "region": region, "authority": authority},
+            )
+
+    def get_document(self, jurisdiction_code, doc_key) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                text("SELECT * FROM tax_documents WHERE jurisdiction_code = :j AND doc_key = :k"),
+                {"j": jurisdiction_code, "k": doc_key},
+            ).mappings().fetchone()
+            return dict(row) if row else None
+
+    def upsert_document(self, doc: dict) -> int:
+        tags = json.dumps(doc.get("tags") or [])
+        existing = self.get_document(doc["jurisdiction_code"], doc["doc_key"])
+        with self.conn() as c:
+            if existing:
+                c.execute(
+                    text(
+                        "UPDATE tax_documents SET source=:source, doc_type=:doc_type, "
+                        "title=:title, reference=:reference, url=:url, format=:format, "
+                        "tags=:tags WHERE id=:id"
+                    ),
+                    {**doc, "tags": tags, "id": existing["id"]},
+                )
+                return existing["id"]
+            res = c.execute(
+                text(
+                    "INSERT INTO tax_documents "
+                    "(jurisdiction_code, source, doc_type, doc_key, title, reference, "
+                    " url, format, tags, first_seen, status) "
+                    "VALUES (:jurisdiction_code, :source, :doc_type, :doc_key, :title, "
+                    " :reference, :url, :format, :tags, :now, 'active')"
+                ),
+                {
+                    "jurisdiction_code": doc["jurisdiction_code"],
+                    "source": doc.get("source"),
+                    "doc_type": doc["doc_type"],
+                    "doc_key": doc["doc_key"],
+                    "title": doc["title"],
+                    "reference": doc.get("reference"),
+                    "url": doc["url"],
+                    "format": doc.get("format", "html"),
+                    "tags": tags,
+                    "now": utcnow(),
+                },
+            )
+            return res.lastrowid
+
+    def latest_version(self, document_id: int) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                text(
+                    "SELECT * FROM document_versions WHERE document_id = :d "
+                    "ORDER BY version_no DESC LIMIT 1"
+                ),
+                {"d": document_id},
+            ).mappings().fetchone()
+            return dict(row) if row else None
+
+    def add_version(self, document_id, content_hash, text_content, raw_path=None,
+                    byte_size=None, http_last_modified=None, etag=None) -> dict:
+        prev = self.latest_version(document_id)
+        version_no = (prev["version_no"] + 1) if prev else 1
+        with self.conn() as c:
+            res = c.execute(
+                text(
+                    "INSERT INTO document_versions "
+                    "(document_id, version_no, content_hash, text_content, raw_path, "
+                    " byte_size, char_count, http_last_modified, etag, fetched_at) "
+                    "VALUES (:d, :v, :h, :t, :rp, :bs, :cc, :lm, :etag, :now)"
+                ),
+                {
+                    "d": document_id, "v": version_no, "h": content_hash,
+                    "t": text_content, "rp": raw_path, "bs": byte_size,
+                    "cc": len(text_content or ""), "lm": http_last_modified,
+                    "etag": etag, "now": utcnow(),
+                },
+            )
+            vid = res.lastrowid
+            c.execute(
+                text(
+                    "UPDATE tax_documents SET current_version_id=:vid, current_hash=:h, "
+                    "last_changed=:now WHERE id=:d"
+                ),
+                {"vid": vid, "h": content_hash, "now": utcnow(), "d": document_id},
+            )
+        return {"id": vid, "version_no": version_no}
+
+    def mark_checked(self, document_id: int, error: str | None = None) -> None:
+        with self.conn() as c:
+            c.execute(
+                text(
+                    "UPDATE tax_documents SET last_checked=:now, "
+                    "check_count=check_count+1, status=:st, last_error=:err WHERE id=:d"
+                ),
+                {
+                    "now": utcnow(), "d": document_id,
+                    "st": "error" if error else "active", "err": error,
+                },
+            )
+
+    def record_change(self, document_id, from_version_id, to_version_id, change_type,
+                      added_chars=0, removed_chars=0, diff_text=None, ai_summary=None,
+                      ai_impact=None, ai_model=None) -> int:
+        with self.conn() as c:
+            res = c.execute(
+                text(
+                    "INSERT INTO document_changes "
+                    "(document_id, from_version_id, to_version_id, change_type, "
+                    " added_chars, removed_chars, diff_text, ai_summary, ai_impact, "
+                    " ai_model, detected_at) "
+                    "VALUES (:d, :fv, :tv, :ct, :ac, :rc, :dt, :sum, :imp, :m, :now)"
+                ),
+                {
+                    "d": document_id, "fv": from_version_id, "tv": to_version_id,
+                    "ct": change_type, "ac": added_chars, "rc": removed_chars,
+                    "dt": diff_text, "sum": ai_summary, "imp": ai_impact,
+                    "m": ai_model, "now": utcnow(),
+                },
+            )
+            return res.lastrowid
+
+    def add_citations(self, document_id, version_id, cites: list[dict]) -> int:
+        if not cites:
+            return 0
+        with self.conn() as c:
+            for ct in cites:
+                c.execute(
+                    text(
+                        "INSERT INTO citations (document_id, version_id, "
+                        "cited_jurisdiction, cited_instrument, cited_locator, snippet, "
+                        "created_at) VALUES (:d, :v, :cj, :ci, :cl, :sn, :now)"
+                    ),
+                    {
+                        "d": document_id, "v": version_id,
+                        "cj": ct.get("jurisdiction"), "ci": ct.get("instrument"),
+                        "cl": ct.get("locator"), "sn": ct.get("snippet"),
+                        "now": utcnow(),
+                    },
+                )
+        return len(cites)
+
+    def overwrite_version_content(self, version_id, document_id, text_content,
+                                  content_hash) -> None:
+        with self.conn() as c:
+            c.execute(
+                text("UPDATE document_versions SET text_content=:t, content_hash=:h "
+                     "WHERE id=:i"),
+                {"t": text_content, "h": content_hash, "i": version_id},
+            )
+            c.execute(
+                text("UPDATE tax_documents SET current_hash=:h WHERE id=:i"),
+                {"h": content_hash, "i": document_id},
+            )
+
+    # ── Scrape runs ────────────────────────────────────────────────────────
+
+    def start_run(self, jurisdiction_code: str) -> int:
+        with self.conn() as c:
+            res = c.execute(
+                text(
+                    "INSERT INTO scrape_runs (jurisdiction_code, started_at, status) "
+                    "VALUES (:j, :now, 'running')"
+                ),
+                {"j": jurisdiction_code, "now": utcnow()},
+            )
+            return res.lastrowid
+
+    def finish_run(self, run_id, checked, new, changed, errors, status="done",
+                   notes=None) -> None:
+        with self.conn() as c:
+            c.execute(
+                text(
+                    "UPDATE scrape_runs SET finished_at=:now, docs_checked=:ch, "
+                    "docs_new=:new, docs_changed=:cg, docs_error=:er, status=:st, "
+                    "notes=:notes WHERE id=:id"
+                ),
+                {
+                    "now": utcnow(), "ch": checked, "new": new, "cg": changed,
+                    "er": errors, "st": status, "notes": notes, "id": run_id,
+                },
+            )
+
+    # ── Reads ──────────────────────────────────────────────────────────────
+
+    def get_document_by_id(self, document_id: int) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                text("SELECT * FROM tax_documents WHERE id=:i"), {"i": document_id}
+            ).mappings().fetchone()
+            return dict(row) if row else None
+
+    def list_versions(self, document_id: int) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(
+                text("SELECT * FROM document_versions WHERE document_id=:i "
+                     "ORDER BY version_no DESC"),
+                {"i": document_id},
+            ).mappings().all()
+            return [dict(r) for r in rows]
+
+    _CHANGE_SELECT = (
+        "SELECT ch.*, d.title, d.jurisdiction_code, d.doc_type, d.url "
+        "FROM document_changes ch JOIN tax_documents d ON d.id = ch.document_id "
+    )
+
+    def recent_changes(self, limit=50, jurisdiction_code=None) -> list[dict]:
+        q = self._CHANGE_SELECT
+        params = {"lim": limit}
+        if jurisdiction_code:
+            q += "WHERE d.jurisdiction_code = :j "
+            params["j"] = jurisdiction_code
+        q += "ORDER BY ch.detected_at DESC LIMIT :lim"
+        with self.conn() as c:
+            rows = c.execute(text(q), params).mappings().all()
+            return [dict(r) for r in rows]
+
+    def list_changes_for_document(self, document_id: int) -> list[dict]:
+        q = self._CHANGE_SELECT + "WHERE ch.document_id=:i ORDER BY ch.detected_at DESC"
+        with self.conn() as c:
+            rows = c.execute(text(q), {"i": document_id}).mappings().all()
+            return [dict(r) for r in rows]
+
+    def get_change(self, change_id: int) -> dict | None:
+        q = self._CHANGE_SELECT + "WHERE ch.id=:i"
+        with self.conn() as c:
+            row = c.execute(text(q), {"i": change_id}).mappings().fetchone()
+            return dict(row) if row else None
+
+    def list_citations(self, document_id: int, limit: int = 40) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(
+                text(
+                    "SELECT DISTINCT cited_instrument, cited_locator FROM citations "
+                    "WHERE document_id=:i AND cited_instrument IS NOT NULL LIMIT :lim"
+                ),
+                {"i": document_id, "lim": limit},
+            ).mappings().all()
+            return [dict(r) for r in rows]
+
+    def get_jurisdiction(self, code: str) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                text("SELECT * FROM jurisdictions WHERE code=:c"), {"c": code}
+            ).mappings().fetchone()
+            return dict(row) if row else None
+
+    def list_jurisdictions_with_counts(self) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(text(
+                "SELECT j.code, j.name, j.authority, "
+                "(SELECT COUNT(*) FROM tax_documents d WHERE d.jurisdiction_code=j.code) docs "
+                "FROM jurisdictions j ORDER BY j.name")).mappings().all()
+            return [dict(r) for r in rows]
+
+    def list_documents_for_jurisdiction(self, code: str) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(text(
+                "SELECT d.*, (SELECT COUNT(*) FROM document_versions v WHERE v.document_id=d.id) versions "
+                "FROM tax_documents d WHERE d.jurisdiction_code=:c ORDER BY d.doc_type, d.title"),
+                {"c": code}).mappings().all()
+            return [dict(r) for r in rows]
+
+    def stats(self) -> dict:
+        with self.conn() as c:
+            def scalar(q):
+                return c.execute(text(q)).scalar() or 0
+            return {
+                "jurisdictions": scalar("SELECT COUNT(*) FROM jurisdictions"),
+                "documents": scalar("SELECT COUNT(*) FROM tax_documents"),
+                "versions": scalar("SELECT COUNT(*) FROM document_versions"),
+                "changes": scalar("SELECT COUNT(*) FROM document_changes"),
+                "by_jurisdiction": [
+                    dict(r) for r in c.execute(text(
+                        "SELECT jurisdiction_code, COUNT(*) AS docs FROM tax_documents "
+                        "GROUP BY jurisdiction_code ORDER BY jurisdiction_code"
+                    )).mappings().all()
+                ],
+            }
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                text("SELECT id, password_hash FROM users WHERE email=:e"),
+                {"e": email.strip().lower()},
+            ).mappings().fetchone()
+            return dict(row) if row else None
+
+    # ── Graph-RAG retrieval (full-text over current versions) ───────────────
+
+    def search_versions(self, query: str, limit: int = 8) -> list[dict]:
+        """Substring/keyword scan over each document's current version.
+
+        SQLite has no built-in semantic search; we score the current version of
+        each document by how many query terms it contains. Good enough as the
+        relational fallback — the Neo4j backend uses a real full-text index.
+        """
+        terms = [t for t in re.split(r"\W+", (query or "").lower()) if len(t) > 2]
+        if not terms:
+            return []
+        with self.conn() as c:
+            rows = c.execute(text(
+                "SELECT d.id AS document_id, d.doc_key, d.title, d.jurisdiction_code, "
+                "       d.doc_type, d.url, d.reference, v.version_no, v.text_content "
+                "FROM tax_documents d JOIN document_versions v ON v.id = d.current_version_id "
+                "WHERE d.status='active'")).mappings().all()
+        scored = []
+        for r in rows:
+            hay = (r["text_content"] or "").lower()
+            score = sum(hay.count(t) for t in terms)
+            if score:
+                scored.append({**dict(r), "score": float(score)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:limit]

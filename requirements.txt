@@ -1,6 +1,9 @@
 python-fasthtml==0.14.2
 sqlalchemy==2.0.50
 psycopg2-binary==2.9.12
+# Graph backend (DATA_STORAGE=neo4j). 4.4.x driver speaks Bolt to the local
+# Neo4j 4.1 and to AuraDB 5.x — no code change when we move to Aura.
+neo4j==4.4.12
 python-dotenv==1.2.2
 uvicorn==0.49.0
 python-multipart==0.0.32
@@ -14,6 +17,11 @@ httpx==0.28.1
 pydantic-settings==2.14.1
 playwright==1.60.0
 pyyaml==6.0.3
+# Scraper: HTML + PDF extraction
+beautifulsoup4==4.14.3
+lxml==5.2.1
+pdfminer.six==20251230
+PyPDF2==3.0.1
 exa-py==2.13.0
 bcrypt==4.3.0
 requests==2.32.3
