@@ -283,6 +283,64 @@ git revert HEAD
 git push origin main
 ```
 
+### TaxHub production deployment (live runbook)
+
+Deployed 2026-06-12 to **https://taxhub.predictivelabs.ai** on the Coolify at
+`coolify.predictivelabs.ai` (login `info@predictivelabs.co.uk`). Project
+**JTCGroup** → resource **taxhub** (umbrella project holds multiple resources).
+Server: `localhost` (Coolify host, `187.124.131.91`). DNS: A record
+`taxhub → 187.124.131.91` (set in registrar).
+
+**Git source = Deploy Key (no GitHub App / no browser login needed).** The repo
+`predictivelabsai/taxhub` is private. Instead of the GitHub-App manifest flow
+(which 500s without a browser GitHub session), use a deploy key driven by the
+already-authorised `gh` CLI:
+
+```bash
+# 1. Generate a keypair
+ssh-keygen -t ed25519 -f /tmp/taxhub_deploy -N "" -C "coolify-taxhub-deploy"
+# 2. Add PUBLIC key to the repo as a read-only deploy key
+gh repo deploy-key add /tmp/taxhub_deploy.pub --title coolify-taxhub -R predictivelabsai/taxhub
+# 3. Add PRIVATE key to Coolify: Security → Private Keys → + Add  (name: taxhub-deploy-key)
+```
+
+Then in Coolify: **+ Add Resource → Private Repository (with Deploy Key)** →
+select `taxhub-deploy-key` → Repository URL `git@github.com:predictivelabsai/taxhub.git`,
+Branch `main`, **Build Pack = Dockerfile**. On the resource General page set:
+- **Name**: `taxhub`
+- **Domains**: `https://taxhub.predictivelabs.ai` (Coolify auto-provisions the TLS cert)
+- **Ports Exposes**: `5011` (Dockerfile CMD runs uvicorn on 5011)
+
+**Env vars** (Environment Variables → Developer view → paste, Save All): the full
+set from `.env` — `DATA_STORAGE=neo4j`, the four `NEO4J_*` (AuraDB), `XAI_*` +
+`GROK_MODEL` + `LLM_PROVIDER`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`, `APP_SECRET`,
+`DB_URL`. **AuraDB Free gotcha:** `NEO4J_USER` and `NEO4J_DATABASE` are the
+**instance id** (e.g. `05a16101`), NOT `neo4j` — see `docs/architecture_readme.md`.
+Changing env vars requires a **redeploy** to take effect.
+
+**Auth model:** every page calls `require(sess)` → unauthenticated hits redirect
+to `/login`; only `/health` and `/login` are public. So the seeded admin login
+*is* the site's password protection (no Traefik basic-auth needed).
+
+**Build note:** the Dockerfile installs Playwright/Chromium, so a cold build
+takes ~4-5 min; env-only redeploys are fast (layers cached). Coolify uses the
+Dockerfile `HEALTHCHECK` (`/health`) for the rolling update.
+
+### Post-deploy verification (TaxHub prod)
+
+```bash
+B=https://taxhub.predictivelabs.ai; J=/tmp/c.txt; rm -f $J
+curl -sS $B/health                                   # {"status":"ok"}
+curl -so/dev/null -w "%{http_code}\n" $B/             # 303 -> /login (auth gate)
+curl -sS -c$J -b$J -o/dev/null -w "%{http_code}\n" \
+  --data-urlencode email=admin@jtgroup.com --data-urlencode 'password=Funds2$2' $B/login   # 303 -> /
+curl -sS -c$J -b$J $B/ | grep -o Jersey               # dashboard reads AuraDB
+curl -sS -c$J -b$J --data-urlencode "q=economic substance Jersey?" $B/ask | grep -o Answer  # graph-RAG + Grok
+```
+
+All six checks passed on first prod run (graph-RAG returned a Grok answer with
+numbered citations from the AuraDB corpus).
+
 ---
 
 ## 6. Scraper Management
