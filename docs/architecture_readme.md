@@ -285,11 +285,17 @@ Steps:
    ```
    DATA_STORAGE=neo4j
    NEO4J_URI=neo4j+s://<id>.databases.neo4j.io
-   NEO4J_USER=neo4j
+   NEO4J_USER=<id>          # see note below
    NEO4J_PASSWORD=<generated>
-   NEO4J_DATABASE=neo4j
+   NEO4J_DATABASE=<id>      # see note below
    ```
-   (`neo4j+s://` enables Bolt over TLS — required by Aura.)
+   (`neo4j+s://` enables Bolt over TLS — required by Aura.) **Gotcha:** on
+   AuraDB *Free*, the username and the database name are **the instance id**
+   (e.g. `05a16101`), **not** `neo4j` — connecting to database `neo4j` fails
+   with `DatabaseNotFound`. Use the exact values from the credentials file Aura
+   downloads at creation time (it's shown only once). On Professional the
+   username/database are typically `neo4j`; either way, trust the downloaded
+   credentials file.
 3. Initialise the schema (idempotent, version-tolerant 4.x/5.x DDL):
    ```bash
    docker compose run --rm scrape --stats   # or: python3.12 taxstore.py
