@@ -230,7 +230,7 @@ def health():
 @rt("/login", methods=["GET"])
 def login_form(sess, error: str = ""):
     return Title("Sign in · TaxHub"), CSS, Form(
-        H2("JTC TaxHub"), P("Sign in", style="color:#6b7686"),
+        H2("TaxHub Demo"), P("Sign in", style="color:#6b7686"),
         (P(error, style="color:#c0392b") if error else ""),
         Input(name="email", placeholder="Email", type="email"),
         Input(name="password", placeholder="Password", type="password"),
