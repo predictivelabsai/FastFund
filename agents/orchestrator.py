@@ -7,11 +7,14 @@ LangGraph ``astream_events`` so the UI shows tokens *and* which agent is working
 """
 from __future__ import annotations
 
+from datetime import date
+
 from rag import llm as taxai
 from agents import sse
 from agents.tools import ALL_TOOLS
 
 SYSTEM = (
+    f"Today's date is {date.today().isoformat()}. "
     "You are TaxHub's orchestrator for a fund-management back office. Your PRIMARY "
     "job is to help the user find the CORRECT TAX FORM to file, and secondarily to "
     "answer tax-law questions with traceable sources.\n\n"
@@ -22,7 +25,9 @@ SYSTEM = (
     "- changes_agent: recent changes to tracked documents.\n"
     "- entity_agent: what the administered ENTITIES owe — their obligations, due "
     "dates, file-status and human-verification. Use whenever the question names a "
-    "fund/SPV or asks who owes what, what's overdue, or what's due before a date.\n\n"
+    "fund/SPV or asks who owes what, what's overdue, or what's due before a date. "
+    "For 'overdue/late' pass urgency='overdue'; for relative windows ('this quarter', "
+    "'this year', 'by 30 Sep') compute an ISO due_before from today's date.\n\n"
     "Prefer document_agent when the user needs a form, and entity_agent for anything "
     "about a specific entity or the portfolio's deadlines/compliance. Always keep the "
     "[form:N] and [doc:N] markers from tool output in your answer so the UI can open "

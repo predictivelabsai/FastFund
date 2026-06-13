@@ -101,7 +101,8 @@ def _resolve_entities(entity: str) -> list[dict]:
 
 @tool
 def entity_agent(entity: str = "", category: str = "", status: str = "",
-                 due_before: str = "", due_within_days: int = 0) -> str:
+                 due_before: str = "", due_within_days: int = 0,
+                 urgency: str = "") -> str:
     """Answer questions about the FUND ENTITIES JTC administers and what they OWE —
     their filing obligations, computed DUE DATES, file-status, and whether each is
     human-VERIFIED. Use for: "what does Aurora owe this year?", "which entities have
@@ -115,6 +116,8 @@ def entity_agent(entity: str = "", category: str = "", status: str = "",
     - due_before: ISO date 'YYYY-MM-DD' — keep only obligations due on/before it
       (use this for "this quarter", "before 30 Sep", "by year-end").
     - due_within_days: keep obligations due within N days from today.
+    - urgency: overdue | due_soon | upcoming | scheduled — filter by computed
+      urgency. Use urgency='overdue' for "what's overdue / late / past due".
 
     Each obligation shows its resolved due date, urgency, status, and a ✓ (verified)
     or ⚠ (awaiting sign-off) flag. Carries [form:N] markers so the UI can open forms."""
@@ -143,6 +146,8 @@ def entity_agent(entity: str = "", category: str = "", status: str = "",
             if status and (ob.get("status") or "not_started") != status:
                 continue
             a = monitor.annotate(ob, e, today)
+            if urgency and a.get("urgency") != urgency:
+                continue
             if cutoff is not None:
                 due = a.get("due")
                 # Keep only dated obligations on/before the cutoff.
@@ -155,11 +160,11 @@ def entity_agent(entity: str = "", category: str = "", status: str = "",
 
     if not by_ent:
         scope = f" for {ents[0]['name']}" if entity and len(ents) == 1 else ""
-        filt = " matching that filter" if (category or status or cutoff) else ""
+        filt = " matching that filter" if (category or status or cutoff or urgency) else ""
         return f"No obligations{scope}{filt}. (Run Determine on the entity if it has none yet.)"
 
     # No-filter, whole-book → a compact portfolio summary instead of every row.
-    if not entity and not (category or status or cutoff):
+    if not entity and not (category or status or cutoff or urgency):
         lines = ["Entities and their filing status:"]
         for e, rows in by_ent.values():
             filed = sum(1 for r in rows if (r.get("status") in ("filed", "confirmed")))
