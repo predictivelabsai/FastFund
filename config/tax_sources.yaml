@@ -1,4 +1,13 @@
-# TaxHub — official tax document sources by jurisdiction.
+# TaxHub — LEGISLATIVE SOURCES catalogue (the law / provenance corpus).
+#
+# ⚠ This file lists LEGISLATION, GUIDANCE, CIRCULARS, GAZETTES and TREATIES only —
+#   the primary law that tax forms implement. Scraped into (:Document)->(:Version)
+#   nodes; powers citation/change traceability and the law_agent graph-RAG. This is
+#   the SECONDARY corpus.
+#
+#   TAX FORMS — the PRIMARY corpus the product is built around — live in a SEPARATE
+#   file, config/tax_forms.yaml, stored as distinct (:Form) nodes. Forms link back
+#   to the relevant law here via `legislation_ref` (the law is linked, not duplicated).
 #
 # Structure:
 #   jurisdictions:

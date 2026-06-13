@@ -112,6 +112,35 @@ Shortcuts in chat: `form:` (find form) · `law:` (graph-RAG) · `forms:` (list b
 `changes:` · `find:`. Chat history persists in the active backend (AuraDB). Forms tree taxonomy:
 Jurisdiction → category → form_type → form (click opens the PDF in the right pane).
 
+### Scraping: corpora, raw capture, headless & Cloudflare
+
+**Two separate corpora, separate node types — don't conflate them:**
+- **Legislation/guidance** = `(:Document)`→`(:Version)` (config `tax_sources.yaml`). Captured by
+  `ingest.fetch.fetch_document()` + `save_raw()` → raw bytes at `data/raw/<jur>/<doc_key>/v000N.{pdf,html}`;
+  extracted text → `(:Version)` nodes (61 docs ingested in AuraDB). This is the **law/provenance** corpus.
+- **Tax forms** = `(:Form)` (config `tax_forms.yaml`). The **primary** corpus. Downloaded PDFs at
+  `data/forms/<jur>/<form_key>.pdf`; served at `/form-pdf/{id}`. Each form has a `legislation_ref`
+  link back to the law it implements (provenance — the law is linked, not re-collected).
+
+```bash
+python3.12 -m ingest.cli --all       # (re)capture legislation -> data/raw + (:Document)
+python3.12 -m ingest.cli --forms     # scrape forms -> data/forms + (:Form)
+```
+
+**Headless vs headed / Cloudflare (verified 2026-06-13):**
+- Guernsey **legislation** site `guernseylegalresources.gg` is behind Cloudflare; raw httpx gets
+  `403 / "Just a moment"`. It's a **passive JS challenge** (no Turnstile) — a **headed real Chromium
+  auto-passes it** (the MCP browser did, no human solve). The old "~353 chars" was *headless detection*.
+- **Fix for gated sites:** run the browser fetch **headed under xvfb** (works on the Coolify host, any IP),
+  optionally + `playwright-stealth`. Once cleared, in-page `fetch()` returns full content (cookies incl.
+  httpOnly `cf_clearance` auto-attach).
+- **Fallbacks:** capture `storage_state` (cookies) once in a headed session and reuse — but `cf_clearance`
+  is **IP+UA-bound** and expires, so it must run from the same host/UA; or run **FlareSolverr** as a sidecar
+  for unattended scraping. Prefer finding the **direct PDF/handler endpoint** (e.g. `gov.gg/CHttpHandler.ashx`,
+  `jerseylaw.je/laws/current/PDFs/{REF}.pdf`) which bypasses the CF-protected HTML entirely.
+- **Note:** the revenue **authority** sites (where forms live) are mostly *not* CF-blocked — `gov.gg` is IIS,
+  `impotsdirects.public.lu`/`ditc.ky` are public; `gov.je` is UA-gated (use browser fetch).
+
 ### Agent evals (deepeval, LLM judge)
 
 End-to-end quality evals of the agents against a ground-truth set, judged by Grok

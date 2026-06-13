@@ -27,45 +27,68 @@ def load_catalogue() -> dict:
         return yaml.safe_load(f)["jurisdictions"]
 
 
-def scrape_forms(jurisdiction: str | None = None, download: bool = True) -> dict:
+def scrape_forms(jurisdiction: str | None = None, download: bool = True,
+                 discover_all: bool = True) -> dict:
+    from ingest.scrapers.base import slugify, download_pdf, FORMS_DIR
     cat = load_catalogue()
     codes = [jurisdiction] if jurisdiction else list(cat)
-    recorded = downloaded = failed = 0
+    recorded = downloaded = failed = portal = 0
     for code in codes:
         jur = cat.get(code)
         if not jur:
             continue
         store.upsert_jurisdiction(code, jur.get("name", code),
                                   authority=jur.get("authority"))
-        scraper = FormScraper(code, use_browser=code in _BROWSER_JURISDICTIONS)
+        use_browser = bool(jur.get("index_browser"))
+        scraper = FormScraper(code, use_browser=use_browser)
+        curated_keys = set()
+
         for form in jur.get("forms", []):
+            curated_keys.add(form["form_key"])
+            mode = form.get("mode", "download")
             rec = {
-                "jurisdiction_code": code,
-                "category": form.get("category"),
-                "form_type": form.get("form_type"),
-                "form_key": form["form_key"],
-                "title": form.get("title"),
-                "authority": jur.get("authority"),
-                "url": form.get("source") or form.get("url"),
-                "file_path": None,
-                "year": form.get("year"),
-                "who_files": form.get("who_files"),
-                "deadline": form.get("deadline"),
-                "frequency": form.get("frequency"),
-                "summary": form.get("summary"),
+                "jurisdiction_code": code, "category": form.get("category"),
+                "form_type": form.get("form_type"), "form_key": form["form_key"],
+                "title": form.get("title"), "authority": jur.get("authority"),
+                "url": form.get("url") or form.get("source"), "file_path": None,
+                "year": form.get("year"), "who_files": form.get("who_files"),
+                "deadline": form.get("deadline"), "frequency": form.get("frequency"),
+                "summary": form.get("summary"), "legislation_ref": form.get("legislation_ref"),
             }
-            if download:
+            if download and mode == "download":
                 path = scraper.fetch_form_pdf(form)
                 if path:
                     rec["file_path"] = str(path.relative_to(ROOT))
                     downloaded += 1
                 else:
                     failed += 1
+            elif mode == "portal":
+                portal += 1
             store.upsert_form(rec)
             recorded += 1
-            print(f"  [{code}] {form['form_key']:<32} "
-                  f"{'pdf ✓' if rec['file_path'] else 'meta only'}")
-    return {"recorded": recorded, "downloaded": downloaded, "failed_downloads": failed}
+            tag = ("pdf ✓" if rec["file_path"] else ("portal" if mode == "portal" else "no pdf"))
+            print(f"  [{code}] {form['form_key']:<34} {tag}")
+
+        # Discover-all: grab any other PDFs on the authority's forms index.
+        if download and discover_all and jur.get("forms_index"):
+            for link in scraper.discover(jur["forms_index"], match=".pdf"):
+                title = link.get("text") or link["url"].rsplit("/", 1)[-1]
+                key = "auto_" + slugify(title or link["url"])[:48]
+                if not key or key in curated_keys:
+                    continue
+                dest = FORMS_DIR / code / f"{key}.pdf"
+                path = download_pdf(link["url"], dest, use_browser=use_browser)
+                rec = {"jurisdiction_code": code, "category": "other",
+                       "form_type": "form", "form_key": key, "title": title[:160],
+                       "authority": jur.get("authority"), "url": link["url"],
+                       "file_path": str(path.relative_to(ROOT)) if path else None}
+                if path:
+                    downloaded += 1
+                    store.upsert_form(rec)
+                    recorded += 1
+                    print(f"  [{code}] {key:<34} pdf ✓ (discovered)")
+    return {"recorded": recorded, "downloaded": downloaded,
+            "portal": portal, "failed_downloads": failed}
 
 
 def forms_tree(jurisdiction: str | None = None) -> list[dict]:
