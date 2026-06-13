@@ -355,6 +355,18 @@ git revert HEAD
 git push origin main
 ```
 
+### Persistent storage on Coolify (critical for /app/data)
+
+The Dockerfile uses a **Dockerfile build pack** (not docker-compose), so the
+`VOLUME /app/data` is an **anonymous** volume that is **wiped on every redeploy** —
+uploaded PDFs, scraped form PDFs, and a SQLite DB would silently vanish. Fix
+(one-time, in Coolify): taxhub app → **Persistent Storage → + Add → Volume Mount**,
+name `taxhub-data`, destination `/app/data`, then **Redeploy** (the named volume
+persists across future deploys; it starts empty, so re-upload after enabling).
+Symptom if missing: `/form-pdf/{id}` returns 200 right after upload but 303
+(redirect to source) after the next redeploy. AuraDB metadata is unaffected
+(it's external); only the on-disk bytes are lost.
+
 ### TaxHub production deployment (live runbook)
 
 Deployed 2026-06-12 to **https://taxhub.predictivelabs.ai** on the Coolify at
