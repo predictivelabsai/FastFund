@@ -6,9 +6,13 @@
 >   main **Navigate** menu. **Implemented** — `/document-hierarchy`, off existing data.
 > - **Ontology** — the *network/provenance* graph (forms ↔ the legislation they
 >   implement ↔ jurisdictions, plus the schema/meta-graph). More technical, so it
->   lives under **Help** (next to the User Guide). **Deferred** — needs real
->   `(:Form)-[:IMPLEMENTS]->(:Document)` edges first (phase 4 below). The NetworkX
->   design below is for this Ontology surface.
+>   lives under **Help** (next to the User Guide). **Implemented** —
+>   `/ontology` (`web/ontology.py`), with a **Provenance** view and a **Schema**
+>   view. The IMPLEMENTS edges are derived **in-memory** from each form's
+>   `legislation_ref` (NetworkX builds the graph + degree-sizing; vis-network
+>   renders it), so no schema migration was needed. **Still future (phase 4):**
+>   persisting those edges as real `(:Form)-[:IMPLEMENTS]->(:Document)` in Neo4j
+>   so Cypher/graph-RAG can traverse them too.
 
 
 A new left-menu item **Ontology** that renders an interactive **NetworkX graph**

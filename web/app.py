@@ -133,6 +133,7 @@ th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
 PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
+VISNET = Script(src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js")
 
 # Colours for the Document Hierarchy tree (JTC palette).
 _HIER_LEAF = {"downloadable": "#ba2a84", "online": "#6b1766", "reference": "#8a7d92"}
@@ -199,9 +200,13 @@ def logout(sess):
 _REFRESH = {"running": False, "done": False, "log": [], "summary": None}
 
 
-def _admin_ok(sess, token: str) -> bool:
-    return (require(sess) is None) or (
-        bool(token) and token == os.environ.get("APP_SECRET", "taxhub-2026"))
+def _admin_ok(sess, request) -> bool:
+    """Allow a logged-in session, or an X-Admin-Token header matching APP_SECRET.
+    The token is read from a header (not the URL) so it never lands in access logs."""
+    if require(sess) is None:
+        return True
+    tok = request.headers.get("x-admin-token", "") if request is not None else ""
+    return bool(tok) and tok == os.environ.get("APP_SECRET", "taxhub-2026")
 
 
 def _run_refresh(jurisdiction):
@@ -224,10 +229,10 @@ def _run_refresh(jurisdiction):
         _REFRESH.update(running=False, done=True)
 
 
-@rt("/admin/refresh-forms")
-def refresh_forms(sess, token: str = "", jurisdiction: str = ""):
+@rt("/admin/refresh-forms", methods=["POST"])
+def refresh_forms(sess, request, jurisdiction: str = ""):
     import threading
-    if not _admin_ok(sess, token):
+    if not _admin_ok(sess, request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     if _REFRESH["running"]:
         return JSONResponse({"status": "already running", **_REFRESH})
@@ -237,8 +242,8 @@ def refresh_forms(sess, token: str = "", jurisdiction: str = ""):
 
 
 @rt("/admin/refresh-status")
-def refresh_status(sess, token: str = ""):
-    if not _admin_ok(sess, token):
+def refresh_status(sess, request):
+    if not _admin_ok(sess, request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     return JSONResponse(_REFRESH)
 
@@ -284,6 +289,7 @@ def left_pane(sess):
             cls="section"),
         Div(Div("Help", cls="lbl"),
             A("📘 User Guide", href="/help", cls="navlink"),
+            A("🕸 Ontology", href="/ontology", cls="navlink"),
             A("Sign out", href="/logout", cls="navlink"),
             cls="section"),
         cls="pane left")
@@ -657,6 +663,85 @@ drawPlot();
     return (Title("Document Hierarchy · TaxHub"), CSS,
             Div(left_pane(sess), center, right, cls="app"),
             PLOTLY, JS, data_script, plot_js)
+
+
+# ── Ontology (Help): provenance/network graph + schema meta-graph ─────────────
+_ONTO_GROUPS = {  # vis-network group styling (JTC palette)
+    "jurisdiction": {"color": "#550055", "shape": "dot"},
+    "legislation": {"color": "#48484f", "shape": "diamond"},
+    "document": {"color": "#9c5797", "shape": "square"},
+    "form_downloadable": {"color": "#ba2a84", "shape": "dot"},
+    "form_online": {"color": "#6b1766", "shape": "dot"},
+    "form_reference": {"color": "#8a7d92", "shape": "dot"},
+}
+
+
+@rt("/ontology")
+def ontology(sess, mode: str = "instance", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    from web import ontology as onto
+    mode = "schema" if mode == "schema" else "instance"
+    data = (onto.build_schema(store) if mode == "schema"
+            else onto.build_instance(store, jur or None))
+    jurs = sorted({f["jurisdiction_code"] for f in store.list_forms(limit=5000)})
+
+    def mbtn(m, lbl):
+        on = (m == mode)
+        return A(lbl, href=f"/ontology?mode={m}" + (f"&jur={jur}" if jur and m == "instance" else ""),
+                 style=_HBTN + (";background:#6b1766;color:#fff" if on else ""))
+    legend = Span(
+        Span("● ", style="color:#550055"), "Jurisdiction  ",
+        Span("● ", style="color:#ba2a84"), "Form  ",
+        Span("◆ ", style="color:#48484f"), "Legislation",
+        style="color:var(--muted);font-size:12px;margin-left:8px")
+    controls = Div(
+        mbtn("instance", "Provenance"), mbtn("schema", "Schema"),
+        (Select(Option("All jurisdictions", value="", selected=(jur == "")),
+                *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+                onchange="location='/ontology?mode=instance'+(this.value?('&jur='+this.value):'')",
+                style="padding:7px;border:1px solid var(--line);border-radius:7px")
+         if mode == "instance" else Span()),
+        legend,
+        Span(data.get("stats", ""), style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;gap:6px;align-items:center;padding:10px 22px;"
+              "border-bottom:1px solid var(--line);flex-wrap:wrap")
+    center = Div(
+        Div("Ontology — ", Span("how forms trace back to the law" if mode == "instance"
+            else "how the graph database is organised", style="font-weight:400;color:var(--muted)"),
+            cls="chead"),
+        controls,
+        Div(id="net", style="flex:1;min-height:0;background:#fbfcfd"),
+        cls="pane center")
+    right = Div(
+        Div(Span("Detail", id="rtitle"),
+            Span("", id="rclose", cls="x", onclick="closePdf()"), cls="rhead"),
+        Div(Div("Click a form node to open it; click a legislation node to open the "
+                "source law.", cls="muted"), id="rbody", cls="rbody"),
+        cls="pane right", id="rightpane")
+    data_script = Script(f"window.GDATA={_json.dumps(data)};"
+                         f"window.GGROUPS={_json.dumps(_ONTO_GROUPS)};")
+    net_js = Script("""
+var d=window.GDATA;
+var nodes=new vis.DataSet(d.nodes), edges=new vis.DataSet(d.edges);
+var groups={};Object.keys(window.GGROUPS).forEach(function(k){var g=window.GGROUPS[k];
+  groups[k]={shape:g.shape,color:{background:g.color,border:g.color,
+    highlight:{background:g.color,border:'#000'}},font:{color:'#48484f',size:13}};});
+var net=new vis.Network(document.getElementById('net'),{nodes:nodes,edges:edges},{
+  groups:groups,
+  nodes:{borderWidth:1,scaling:{min:8,max:48},font:{size:13}},
+  edges:{color:{color:'#cdbcd0'},arrows:{to:{scaleFactor:0.5}},
+    font:{size:9,color:'#9a93a6',align:'middle'},smooth:{type:'dynamic'}},
+  physics:{stabilization:{iterations:160},barnesHut:{springLength:130,avoidOverlap:0.2}},
+  interaction:{hover:true,tooltipDelay:120}});
+net.on('click',function(p){if(!p.nodes.length)return;var n=nodes.get(p.nodes[0]);
+  if(n.formid){openForm(n.formid);}
+  else if(n.url){window.open(n.url,'_blank');}});
+""")
+    return (Title("Ontology · TaxHub"), CSS,
+            Div(left_pane(sess), center, right, cls="app"),
+            VISNET, JS, data_script, net_js)
 
 
 @rt("/documents")

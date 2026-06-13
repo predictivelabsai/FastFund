@@ -34,3 +34,4 @@ pytest-asyncio==1.0.0
 
 # Vector retrieval embeddings (local ONNX, no API key)
 fastembed>=0.3.0
+networkx
