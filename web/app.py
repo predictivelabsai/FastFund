@@ -132,6 +132,11 @@ th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
+PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
+
+# Colours for the Document Hierarchy tree (JTC palette).
+_HIER_LEAF = {"downloadable": "#ba2a84", "online": "#6b1766", "reference": "#8a7d92"}
+_HIER_BRANCH = {"jur": "#550055", "cat": "#9c5797", "typ": "#c9a3c6"}
 
 
 def current_user(sess):
@@ -265,6 +270,7 @@ def left_pane(sess):
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
+            A("Document Hierarchy", href="/document-hierarchy", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
             cls="section"),
         Div(Div("Recent chats", cls="lbl"),
@@ -553,6 +559,104 @@ def document(sess, doc_id: int, embed: int = 0):
     if embed:
         return (CSS, Div(body, cls="wrap"))
     return Page(body, title=f"{d['title'][:40]} · TaxHub")
+
+
+# ── Document Hierarchy (Plotly tree: Jurisdiction ▸ Category ▸ Form type ▸ Form) ──
+def _hierarchy_payload(jur: str | None = None) -> dict:
+    """Hierarchy payload for Plotly icicle/treemap/sunburst, from forms_tree().
+    Leaves are forms (value 1, coloured by filing type, carry the form id);
+    branch values are leaf counts so branchvalues='total' is consistent."""
+    ids, labels, parents, values, colors, meta = [], [], [], [], [], []
+
+    def add(_id, label, parent, value, color, m=""):
+        ids.append(_id); labels.append(label); parents.append(parent)
+        values.append(value); colors.append(color); meta.append(m)
+
+    for j in forms_tree(jur):
+        jc = j["code"]; jcount = 0
+        for c in j["categories"]:
+            ccount = 0
+            cid = f"{jc}|{c['category']}"
+            for t in c["types"]:
+                tid = f"{cid}|{t['form_type']}"
+                for f in t["forms"]:
+                    add(f"{tid}|{f['id']}", f.get("title") or "form", tid, 1,
+                        _HIER_LEAF.get(f.get("filing_type") or "downloadable", "#cccccc"),
+                        f["id"])
+                add(tid, FORM_TYPE_LABELS.get(t["form_type"], t["form_type"]),
+                    cid, len(t["forms"]), _HIER_BRANCH["typ"])
+                ccount += len(t["forms"])
+            add(cid, CATEGORY_LABELS.get(c["category"], c["category"]),
+                jc, ccount, _HIER_BRANCH["cat"])
+            jcount += ccount
+        add(jc, JUR_NAMES.get(jc, jc), "", jcount, _HIER_BRANCH["jur"])
+    return {"ids": ids, "labels": labels, "parents": parents,
+            "values": values, "colors": colors, "meta": meta}
+
+
+_HBTN = ("padding:5px 12px;border:1px solid var(--navy);border-radius:6px;"
+         "background:#fff;color:#6b1766;cursor:pointer;font-size:13px")
+_HLEGEND = [("downloadable", "📄 Downloadable"), ("online", "🌐 Online"),
+            ("reference", "📘 Reference")]
+
+
+@rt("/document-hierarchy")
+def document_hierarchy(sess, jur: str = ""):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    payload = _hierarchy_payload(jur or None)
+    jurs = sorted({f["jurisdiction_code"] for f in store.list_forms(limit=5000)})
+    nleaf = sum(1 for m in payload["meta"] if m)
+    legend = Span(*[Span(Span("●", style=f"color:{_HIER_LEAF[k]}"), f" {lbl} ",
+                         style="font-size:12px;margin-left:8px") for k, lbl in _HLEGEND],
+                  style="color:var(--muted)")
+    controls = Div(
+        Select(Option("All jurisdictions", value="", selected=(jur == "")),
+               *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+               onchange="location='/document-hierarchy'+(this.value?('?jur='+this.value):'')",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        *[Button(lbl, onclick=f"setType('{t}')", id=f"bt_{t}", style=_HBTN)
+          for t, lbl in [("icicle", "Icicle"), ("treemap", "Treemap"), ("sunburst", "Sunburst")]],
+        legend,
+        Span(f"{nleaf} forms", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;gap:6px;align-items:center;padding:10px 22px;"
+              "border-bottom:1px solid var(--line);flex-wrap:wrap")
+    center = Div(
+        Div("Document Hierarchy", cls="chead"),
+        controls,
+        Div(id="plot", style="flex:1;min-height:0"),
+        cls="pane center")
+    right = Div(
+        Div(Span("Form detail", id="rtitle"),
+            Span("", id="rclose", cls="x", onclick="closePdf()"), cls="rhead"),
+        Div(Div("Click a form (a leaf of the tree) to view it here.", cls="muted"),
+            id="rbody", cls="rbody"),
+        cls="pane right", id="rightpane")
+    data_script = Script(f"window.HDATA={_json.dumps(payload)};")
+    plot_js = Script("""
+let HTYPE='icicle';
+function drawPlot(){
+  var d=window.HDATA;
+  var t={type:HTYPE,ids:d.ids,labels:d.labels,parents:d.parents,values:d.values,
+    branchvalues:'total',customdata:d.meta,
+    marker:{colors:d.colors,line:{width:1,color:'#fff'}},
+    hovertemplate:'%{label}<br>%{value} form(s)<extra></extra>'};
+  if(HTYPE!=='sunburst'){t.tiling={pad:1};}
+  Plotly.react('plot',[t],{margin:{l:4,r:4,t:4,b:4}},{responsive:true,displayModeBar:false});
+  var el=document.getElementById('plot');
+  if(!el._wired){el.on('plotly_click',function(e){var p=e.points&&e.points[0];
+    if(p&&p.customdata){openForm(p.customdata);}});el._wired=true;}
+  ['icicle','treemap','sunburst'].forEach(function(x){var b=document.getElementById('bt_'+x);
+    if(b){b.style.background=(x===HTYPE)?'#6b1766':'#fff';b.style.color=(x===HTYPE)?'#fff':'#6b1766';}});
+}
+function setType(x){HTYPE=x;drawPlot();}
+window.addEventListener('resize',function(){if(window.Plotly)Plotly.Plots.resize('plot');});
+drawPlot();
+""")
+    return (Title("Document Hierarchy · TaxHub"), CSS,
+            Div(left_pane(sess), center, right, cls="app"),
+            PLOTLY, JS, data_script, plot_js)
 
 
 @rt("/documents")

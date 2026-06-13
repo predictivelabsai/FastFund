@@ -1,5 +1,16 @@
 # TaxHub — "Ontology" View Plan
 
+> **Decision (2026-06):** This splits into two surfaces.
+> - **Document Hierarchy** — a *tree* (Jurisdiction ▸ Category ▸ Form type ▸ Form),
+>   rendered with **Plotly** (icicle/treemap/sunburst), click-to-open. Lives in the
+>   main **Navigate** menu. **Implemented** — `/document-hierarchy`, off existing data.
+> - **Ontology** — the *network/provenance* graph (forms ↔ the legislation they
+>   implement ↔ jurisdictions, plus the schema/meta-graph). More technical, so it
+>   lives under **Help** (next to the User Guide). **Deferred** — needs real
+>   `(:Form)-[:IMPLEMENTS]->(:Document)` edges first (phase 4 below). The NetworkX
+>   design below is for this Ontology surface.
+
+
 A new left-menu item **Ontology** that renders an interactive **NetworkX graph**
 of the corpus: both *how the graph DB is organised* (the schema/meta-graph) and
 *how the actual documents relate* (the instance graph — jurisdictions, the tax
