@@ -21,6 +21,8 @@ jurisdictions:
     authority: Revenue Jersey
     index_browser: true                      # gov.je is UA-gated
     forms_index: https://www.gov.je/TaxesMoney/IncomeTax/Companies/Pages/index.aspx
+    index_category: corporate_tax
+    index_form_type: form
     forms:
       - form_key: corporate_tax_return
         title: Company Tax Return (Jersey)
@@ -47,6 +49,8 @@ jurisdictions:
     name: Guernsey
     authority: Guernsey Revenue Service
     forms_index: https://www.gov.gg/revenue-service/income-tax-forms
+    index_category: corporate_tax
+    index_form_type: form
     forms:
       - form_key: company_income_tax_return
         title: Company Income Tax Return (Guernsey)
@@ -64,6 +68,8 @@ jurisdictions:
     name: Luxembourg
     authority: Administration des contributions directes (ACD)
     forms_index: https://impotsdirects.public.lu/fr/formulaires/collectivites.html
+    index_category: corporate_tax
+    index_form_type: form
     forms:
       - form_key: corporate_income_tax_return_500
         title: Déclaration pour l'impôt sur le revenu des collectivités (Form 500)
@@ -81,6 +87,8 @@ jurisdictions:
     name: Ireland
     authority: Revenue Commissioners
     forms_index: https://www.revenue.ie/en/companies-and-charities/corporation-tax-for-companies/corporation-tax/index.aspx
+    index_category: corporate_tax
+    index_form_type: form
     forms:
       - form_key: form_ct1
         title: Corporation Tax Return — Form CT1 (Ireland)
@@ -97,6 +105,8 @@ jurisdictions:
     name: Cayman Islands
     authority: Department for International Tax Cooperation (DITC)
     forms_index: https://www.ditc.ky/economic-substance/es-documents/
+    index_category: economic_substance
+    index_form_type: form
     forms:
       - form_key: economic_substance_notification_guide
         title: Economic Substance Notification — User Guide (Cayman)
@@ -123,6 +133,8 @@ jurisdictions:
     name: British Virgin Islands
     authority: BVI International Tax Authority (ITA)
     forms_index: https://bviita.vg/economic-substance
+    index_category: economic_substance
+    index_form_type: form
     forms:
       - form_key: economic_substance_filing
         title: Economic Substance Filing (BVI, via BOSS)

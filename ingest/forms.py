@@ -69,24 +69,42 @@ def scrape_forms(jurisdiction: str | None = None, download: bool = True,
             tag = ("pdf ✓" if rec["file_path"] else ("portal" if mode == "portal" else "no pdf"))
             print(f"  [{code}] {form['form_key']:<34} {tag}")
 
-        # Discover-all: grab any other PDFs on the authority's forms index.
+        # Discover-all: grab other PDFs on the authority's forms index, deduped to
+        # the latest year per form and categorised by the index's default category.
         if download and discover_all and jur.get("forms_index"):
+            import re
+            icat = jur.get("index_category", "other")
+            itype = jur.get("index_form_type", "form")
+            groups: dict[str, dict] = {}
             for link in scraper.discover(jur["forms_index"], match=".pdf"):
-                title = link.get("text") or link["url"].rsplit("/", 1)[-1]
+                title = (link.get("text") or link["url"].rsplit("/", 1)[-1]).strip()
+                years = re.findall(r"20\d{2}", title + " " + link["url"])
+                yr = max((int(y) for y in years), default=0)
+                base = re.sub(r"\s+", " ", re.sub(r"20\d{2}", "", title)).strip().lower()
+                if not base:
+                    base = link["url"].lower()
+                if base not in groups or yr > groups[base]["yr"]:
+                    groups[base] = {"link": link, "yr": yr, "title": title}
+            for g in groups.values():
+                title, link = g["title"], g["link"]
                 key = "auto_" + slugify(title or link["url"])[:48]
                 if not key or key in curated_keys:
                     continue
                 dest = FORMS_DIR / code / f"{key}.pdf"
-                path = download_pdf(link["url"], dest, use_browser=use_browser)
-                rec = {"jurisdiction_code": code, "category": "other",
-                       "form_type": "form", "form_key": key, "title": title[:160],
-                       "authority": jur.get("authority"), "url": link["url"],
-                       "file_path": str(path.relative_to(ROOT)) if path else None}
-                if path:
-                    downloaded += 1
-                    store.upsert_form(rec)
-                    recorded += 1
-                    print(f"  [{code}] {key:<34} pdf ✓ (discovered)")
+                if dest.exists() and dest.stat().st_size > 0:      # reuse prior download
+                    path = dest
+                else:
+                    path = download_pdf(link["url"], dest, use_browser=use_browser)
+                if not path:
+                    continue
+                downloaded += 1
+                store.upsert_form({
+                    "jurisdiction_code": code, "category": icat, "form_type": itype,
+                    "form_key": key, "title": title[:160], "authority": jur.get("authority"),
+                    "url": link["url"], "file_path": str(path.relative_to(ROOT)),
+                    "year": str(g["yr"]) if g["yr"] else None})
+                recorded += 1
+                print(f"  [{code}] {key:<34} pdf ✓ ({icat}, y{g['yr'] or '—'})")
     return {"recorded": recorded, "downloaded": downloaded,
             "portal": portal, "failed_downloads": failed}
 
