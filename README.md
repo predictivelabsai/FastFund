@@ -169,3 +169,20 @@ Add a record under the relevant jurisdiction's source in
   fetch: http                  # http | browser
   # selector: "main"           # optional CSS pin for html
 ```
+
+## Future plans
+
+- **PDF highlight & provenance** — replace the native-iframe form/document viewer
+  with a pdf.js viewer so an answer's citations are *traceable to the exact
+  passage*. Clicking a `[form:N]` / `[doc:N]` marker (or a cited source) will open
+  the PDF in the right pane, **jump to the relevant page, and highlight the cited
+  text** (pdf.js text-layer + `#search=`/`page=` deep-links). This closes the
+  loop from "the assistant said X" back to the precise words in the official
+  document — the core traceability promise, made visual.
+- **Per-site form-scraper adapters** — robust discovery/download of form PDFs
+  across all six authority sites, including the Cloudflare/JS-gated ones (see
+  the scraper notes below).
+- **Semantic upgrades** — re-rank hybrid results; a DocumentAgent eval set; a
+  Text2Cypher "metadata agent" for deadlines/counts and citation lookups.
+- **Change digest & alerts** — scheduled per-jurisdiction email/in-app digests
+  of recent changes.
