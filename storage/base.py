@@ -250,6 +250,33 @@ class Storage(abc.ABC):
         legislation/guidance Document shares the URL — so Cypher and graph-RAG
         can traverse Form → law → tracked text. Idempotent. Returns counts."""
 
+    # ── Entities (the funds/SPVs JTC administers) ──────────────────────────
+    # An Entity has a domicile + operating jurisdictions; obligations (filings it
+    # owes) are derived from the forms catalogue in a later phase. ``jurisdictions``
+    # and ``activities`` are lists in/out regardless of backend.
+
+    @abc.abstractmethod
+    def upsert_entity(self, entity: dict) -> int:
+        """Insert/update an entity by natural key ``client_ref`` (falls back to
+        ``name``). Fields: name, type, domicile, jurisdictions[list], fy_end,
+        activities[list], client_ref, status. Returns the entity id."""
+
+    @abc.abstractmethod
+    def get_entity(self, entity_id: int) -> dict | None:
+        ...
+
+    @abc.abstractmethod
+    def list_entities(self, limit: int = 500) -> list[dict]:
+        ...
+
+    @abc.abstractmethod
+    def delete_entity(self, entity_id: int) -> None:
+        ...
+
+    @abc.abstractmethod
+    def count_entities(self) -> int:
+        ...
+
     # ── Chat history (assistant sessions) ──────────────────────────────────
     @abc.abstractmethod
     def create_chat_session(self, user_email: str, title: str = "") -> int:

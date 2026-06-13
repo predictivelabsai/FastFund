@@ -598,6 +598,58 @@ class Neo4jStore(Storage):
         return {"legislation_nodes": nleg, "implements_edges": nimpl,
                 "sourced_from_edges": sourced}
 
+    # ── Entities ───────────────────────────────────────────────────────────
+    _ENTITY_PROPS = ("name", "type", "domicile", "jurisdictions", "fy_end",
+                     "activities", "client_ref", "status")
+    _ENTITY_RETURN = (
+        "e.uid AS id, e.name AS name, e.type AS type, e.domicile AS domicile, "
+        "coalesce(e.jurisdictions,[]) AS jurisdictions, e.fy_end AS fy_end, "
+        "coalesce(e.activities,[]) AS activities, e.client_ref AS client_ref, "
+        "e.status AS status")
+
+    def upsert_entity(self, entity: dict) -> int:
+        props = {k: entity[k] for k in self._ENTITY_PROPS if k in entity}
+        key = entity.get("client_ref") or entity.get("name")
+        with self._session() as s:
+            return s.write_transaction(self._upsert_entity, key, props)
+
+    @classmethod
+    def _upsert_entity(cls, tx, key, props) -> int:
+        now = utcnow()
+        ex = tx.run("MATCH (e:Entity) WHERE coalesce(e.client_ref,e.name)=$k "
+                    "RETURN e.uid AS uid", k=key).single()
+        if ex:
+            tx.run("MATCH (e:Entity {uid:$uid}) SET e += $props, e.updated_at=$now",
+                   uid=ex["uid"], props=props, now=now)
+            return ex["uid"]
+        uid = cls._next_id(tx, "Entity")
+        tx.run("CREATE (e:Entity {uid:$uid, created_at:$now, updated_at:$now}) "
+               "SET e += $props", uid=uid, props=props, now=now)
+        for jc in (props.get("jurisdictions") or []):
+            tx.run("MATCH (e:Entity {uid:$uid}) MERGE (j:Jurisdiction {code:$jc}) "
+                   "MERGE (e)-[:IN_JURISDICTION]->(j)", uid=uid, jc=jc)
+        return uid
+
+    def get_entity(self, entity_id: int) -> dict | None:
+        with self._session() as s:
+            r = s.run(f"MATCH (e:Entity {{uid:$i}}) RETURN {self._ENTITY_RETURN}",
+                      i=entity_id).single()
+            return dict(r) if r else None
+
+    def list_entities(self, limit: int = 500) -> list[dict]:
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                f"MATCH (e:Entity) RETURN {self._ENTITY_RETURN} "
+                "ORDER BY e.name LIMIT $lim", lim=limit)]
+
+    def delete_entity(self, entity_id: int) -> None:
+        with self._session() as s:
+            s.run("MATCH (e:Entity {uid:$i}) DETACH DELETE e", i=entity_id)
+
+    def count_entities(self) -> int:
+        with self._session() as s:
+            return s.run("MATCH (e:Entity) RETURN count(e) AS n").single()["n"]
+
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
         with self._session() as s:

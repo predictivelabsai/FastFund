@@ -46,6 +46,30 @@ FILING_LABELS = {"downloadable": "📄 Downloadable form", "online": "🌐 Onlin
 FORM_TYPE_LABELS = {"return": "Return", "notification": "Notification",
                     "declaration": "Declaration", "registration": "Registration",
                     "report": "Report", "guidance": "Guidance", "form": "Form"}
+ENTITY_TYPES = ["fund", "spv", "gp", "trust", "company", "holdco"]
+ACTIVITY_OPTIONS = ["fund management", "holding", "finance & leasing",
+                    "headquartering", "intellectual property", "distribution & service centre"]
+# A few synthetic entities so the feature is demoable before real data is imported.
+SAMPLE_ENTITIES = [
+    {"name": "Aurora Global Fund SPC", "type": "fund", "domicile": "KY",
+     "jurisdictions": ["KY", "US"], "fy_end": "31 December",
+     "activities": ["fund management", "holding"], "client_ref": "JTC-0001"},
+    {"name": "Helios Holdings (Jersey) Ltd", "type": "holdco", "domicile": "JE",
+     "jurisdictions": ["JE"], "fy_end": "31 December",
+     "activities": ["holding"], "client_ref": "JTC-0002"},
+    {"name": "Lumen Private Equity GP Sàrl", "type": "gp", "domicile": "LU",
+     "jurisdictions": ["LU"], "fy_end": "31 December",
+     "activities": ["fund management"], "client_ref": "JTC-0003"},
+    {"name": "Meridian Trust", "type": "trust", "domicile": "GG",
+     "jurisdictions": ["GG"], "fy_end": "30 June",
+     "activities": ["holding"], "client_ref": "JTC-0004"},
+    {"name": "Atlas Infrastructure SCSp", "type": "fund", "domicile": "LU",
+     "jurisdictions": ["LU", "IE"], "fy_end": "31 December",
+     "activities": ["fund management", "finance & leasing"], "client_ref": "JTC-0005"},
+    {"name": "Pioneer Ventures (Cayman) Ltd", "type": "spv", "domicile": "KY",
+     "jurisdictions": ["KY"], "fy_end": "31 December",
+     "activities": ["holding"], "client_ref": "JTC-0006"},
+]
 
 SUGGESTIONS = [
     "form: Cayman economic substance notification",
@@ -301,6 +325,7 @@ def left_pane(sess):
         A("+ New chat", href="/", cls="newchat"),
         Div(Div("Navigate", cls="lbl"),
             A("Dashboard", href="/dashboard", cls="navlink"),
+            A("Entities", href="/entities", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
@@ -589,9 +614,12 @@ def dashboard(sess):
         return r
     st = store.stats()
     jurs = store.list_jurisdictions_with_counts()
+    metrics = {"entities": store.count_entities(),
+               **{k: v for k, v in st.items() if not isinstance(v, list)}}
     return Page(H1("Dashboard"),
         Table(Tr(Th("Metric"), Th("Count")),
-              *[Tr(Td(k), Td(str(v))) for k, v in st.items() if not isinstance(v, list)]),
+              *[Tr(Td(A(k, href="/entities") if k == "entities" else k), Td(str(v)))
+                for k, v in metrics.items()]),
         H2("Jurisdictions"),
         Table(Tr(Th("Code"), Th("Documents")),
               *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
@@ -824,6 +852,142 @@ net.on('click',function(p){if(!p.nodes.length)return;var n=nodes.get(p.nodes[0])
     return (Title("Ontology · TaxHub"), CSS,
             Div(left_pane(sess), center, right, cls="app"),
             VISNET, JS, data_script, net_js)
+
+
+# ── Entities (Phase 1: model + CRUD + CSV import) ─────────────────────────────
+def _jur_badges(codes):
+    return Span(*[Span(c, style="display:inline-block;background:#efeaf3;color:#6b1766;"
+                       "border-radius:5px;padding:1px 7px;margin:1px;font-size:11px")
+                  for c in (codes or [])]) or Span("—", cls="muted")
+
+
+@rt("/entities")
+def entities(sess, added: str = ""):
+    if (r := require(sess)):
+        return r
+    ents = store.list_entities(limit=1000)
+    rows = [Tr(Td(A(e["name"], href=f"/entity/{e['id']}")),
+               Td(e.get("type") or "—"), Td(e.get("domicile") or "—"),
+               Td(_jur_badges(e.get("jurisdictions"))),
+               Td(e.get("fy_end") or "—"), Td(e.get("client_ref") or "—"))
+            for e in ents]
+    add_form = Form(
+        H3("Add an entity"),
+        (P("✓ Saved.", style="color:#1c7c44") if added else ""),
+        Div(Input(name="name", placeholder="Entity name", required=True, style="width:40%"),
+            Select(*[Option(t, value=t) for t in ENTITY_TYPES], name="type", style="width:18%;margin:0 1%"),
+            Select(*[Option(JUR_NAMES.get(c, c), value=c) for c in sorted(JUR_NAMES)],
+                   name="domicile", style="width:18%;margin-right:1%"),
+            Input(name="client_ref", placeholder="Client ref", style="width:18%"),
+            style="display:flex;gap:4px;margin:6px 0"),
+        Div(Input(name="jurisdictions", placeholder="Jurisdictions (comma codes, e.g. KY,US)", style="width:40%"),
+            Input(name="fy_end", placeholder="Financial year-end (e.g. 31 December)", style="width:30%;margin:0 1%"),
+            Input(name="activities", placeholder="Activities (comma)", style="width:28%"),
+            style="display:flex;gap:4px;margin:6px 0"),
+        Button("Save entity", cls="btn", style="margin-top:8px"),
+        method="post", action="/entity")
+    import_form = Form(
+        H3("Import from CSV"),
+        P("Columns: name,type,domicile,jurisdictions,fy_end,activities,client_ref "
+          "(jurisdictions & activities semicolon- or pipe-separated).", cls="muted",
+          style="font-size:12px"),
+        Input(type="file", name="csv_file", accept=".csv", required=True),
+        Button("Import CSV", cls="btn", style="margin-left:8px"),
+        method="post", action="/entities/import", enctype="multipart/form-data")
+    return Page(
+        H1("Entities"),
+        P(f"{len(ents)} entities. The funds/SPVs you administer — obligations, "
+          "deadlines and filing status build on these in the next phases.", cls="muted"),
+        add_form, import_form,
+        H2("Portfolio"),
+        (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Jurisdictions"),
+                  Th("FY end"), Th("Client ref")), *rows) if rows
+         else P("No entities yet — add one above or import a CSV.", cls="muted")),
+        title="Entities · TaxHub")
+
+
+@rt("/entity", methods=["POST"])
+def entity_create(sess, name: str = "", type: str = "company", domicile: str = "",
+                  jurisdictions: str = "", fy_end: str = "", activities: str = "",
+                  client_ref: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    if not name.strip():
+        return RedirectResponse("/entities", status_code=303)
+    store.upsert_entity({
+        "name": name.strip(), "type": type, "domicile": domicile,
+        "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", jurisdictions) if j.strip()],
+        "fy_end": fy_end.strip() or None,
+        "activities": [a.strip() for a in re.split(r"[,;|]", activities) if a.strip()],
+        "client_ref": client_ref.strip() or None, "status": "active"})
+    return RedirectResponse("/entities?added=1", status_code=303)
+
+
+@rt("/entities/import", methods=["POST"])
+async def entities_import(sess, csv_file: UploadFile):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    import csv
+    import io
+    raw = (await csv_file.read()).decode("utf-8-sig", errors="ignore")
+    n = 0
+    for row in csv.DictReader(io.StringIO(raw)):
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        store.upsert_entity({
+            "name": name, "type": (row.get("type") or "company").strip(),
+            "domicile": (row.get("domicile") or "").strip(),
+            "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", row.get("jurisdictions") or "") if j.strip()],
+            "fy_end": (row.get("fy_end") or "").strip() or None,
+            "activities": [a.strip() for a in re.split(r"[,;|]", row.get("activities") or "") if a.strip()],
+            "client_ref": (row.get("client_ref") or "").strip() or None, "status": "active"})
+        n += 1
+    return RedirectResponse("/entities?added=1", status_code=303)
+
+
+@rt("/entity/{entity_id}")
+def entity_view(sess, entity_id: int):
+    if (r := require(sess)):
+        return r
+    e = store.get_entity(entity_id)
+    if not e:
+        return Page(H1("Entity not found"))
+    return Page(
+        H1(e["name"]),
+        Dl(Dt("Type"), Dd(e.get("type") or "—"),
+           Dt("Domicile"), Dd(JUR_NAMES.get(e.get("domicile"), e.get("domicile") or "—")),
+           Dt("Operating jurisdictions"), Dd(_jur_badges(e.get("jurisdictions"))),
+           Dt("Financial year-end"), Dd(e.get("fy_end") or "—"),
+           Dt("Activities"), Dd(", ".join(e.get("activities") or []) or "—"),
+           Dt("Client ref"), Dd(e.get("client_ref") or "—"),
+           Dt("Status"), Dd(e.get("status") or "—"), cls="formmeta"),
+        Div(
+            H2("Obligations"),
+            P("Obligations (which forms this entity must file, with deadlines and "
+              "status) are generated by the Determine engine — coming in the next "
+              "phase. This entity operates in: ", _jur_badges(e.get("jurisdictions")), cls="muted"),
+            style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px"),
+        Form(Button("Delete entity", cls="btn",
+                    style="background:#b0353a", onclick="return confirm('Delete this entity?')"),
+             method="post", action=f"/entity/{entity_id}/delete", style="margin-top:18px"),
+        title=f"{e['name']} · TaxHub")
+
+
+@rt("/entity/{entity_id}/delete", methods=["POST"])
+def entity_delete(sess, entity_id: int):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    store.delete_entity(entity_id)
+    return RedirectResponse("/entities", status_code=303)
+
+
+@rt("/admin/seed-entities", methods=["POST"])
+def seed_entities(sess, request):
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    ids = [store.upsert_entity(e) for e in SAMPLE_ENTITIES]
+    return JSONResponse({"seeded": len(ids), "total": store.count_entities()})
 
 
 @rt("/documents")

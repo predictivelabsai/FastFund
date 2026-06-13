@@ -153,6 +153,22 @@ class SqliteStore(Storage):
             last_seen         TEXT,
             UNIQUE(jurisdiction_code, form_key)
         )""",
+        # Entities (the funds/SPVs JTC administers). jurisdictions/activities
+        # are stored as comma-joined text and returned as lists.
+        """CREATE TABLE IF NOT EXISTS entities (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL,
+            type          TEXT,
+            domicile      TEXT,
+            jurisdictions TEXT,
+            fy_end        TEXT,
+            activities    TEXT,
+            client_ref    TEXT,
+            status        TEXT,
+            created_at    TEXT,
+            updated_at    TEXT,
+            UNIQUE(client_ref)
+        )""",
         """CREATE TABLE IF NOT EXISTS chat_sessions (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
@@ -655,6 +671,60 @@ class SqliteStore(Storage):
         laws = set(refs)
         return {"legislation_nodes": len(laws), "implements_edges": len(refs),
                 "sourced_from_edges": len(laws & doc_urls), "backend": "sqlite-derived"}
+
+    # ── Entities ───────────────────────────────────────────────────────────
+    @staticmethod
+    def _entity_row(r) -> dict:
+        d = dict(r)
+        d["jurisdictions"] = [x for x in (d.get("jurisdictions") or "").split(",") if x]
+        d["activities"] = [x for x in (d.get("activities") or "").split(",") if x]
+        return d
+
+    def upsert_entity(self, entity: dict) -> int:
+        now = utcnow()
+        v = {
+            "name": entity.get("name"), "type": entity.get("type"),
+            "domicile": entity.get("domicile"),
+            "jurisdictions": ",".join(entity.get("jurisdictions") or []),
+            "fy_end": entity.get("fy_end"),
+            "activities": ",".join(entity.get("activities") or []),
+            "client_ref": entity.get("client_ref") or entity.get("name"),
+            "status": entity.get("status") or "active",
+        }
+        with self.conn() as c:
+            row = c.execute(text("SELECT id FROM entities WHERE client_ref=:k"),
+                            {"k": v["client_ref"]}).first()
+            if row:
+                sets = ", ".join(f"{k}=:{k}" for k in v)
+                c.execute(text(f"UPDATE entities SET {sets}, updated_at=:now WHERE id=:id"),
+                          {**v, "now": now, "id": row[0]})
+                return row[0]
+            res = c.execute(text(
+                "INSERT INTO entities (name,type,domicile,jurisdictions,fy_end,"
+                "activities,client_ref,status,created_at,updated_at) VALUES "
+                "(:name,:type,:domicile,:jurisdictions,:fy_end,:activities,"
+                ":client_ref,:status,:now,:now)"), {**v, "now": now})
+            return int(res.lastrowid)
+
+    def get_entity(self, entity_id: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT * FROM entities WHERE id=:i"),
+                          {"i": entity_id}).mappings().first()
+            return self._entity_row(r) if r else None
+
+    def list_entities(self, limit: int = 500) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(text("SELECT * FROM entities ORDER BY name LIMIT :l"),
+                             {"l": limit}).mappings().all()
+        return [self._entity_row(r) for r in rows]
+
+    def delete_entity(self, entity_id: int) -> None:
+        with self.conn() as c:
+            c.execute(text("DELETE FROM entities WHERE id=:i"), {"i": entity_id})
+
+    def count_entities(self) -> int:
+        with self.conn() as c:
+            return int(c.execute(text("SELECT count(*) FROM entities")).scalar() or 0)
 
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
