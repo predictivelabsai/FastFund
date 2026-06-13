@@ -129,6 +129,23 @@ iframe.pdf{width:100%;height:100%;border:none}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line);font-size:13.5px}
 th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase}
+/* Copilot drawer (collapsible chat on Navigate pages) */
+.cop-fab{position:fixed;right:20px;bottom:20px;z-index:50;background:var(--accent);color:#fff;
+border:none;border-radius:30px;padding:12px 18px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.cop-fab:hover{filter:brightness(1.05)}
+.cop{position:fixed;top:0;right:0;height:100vh;width:400px;max-width:92vw;background:#fff;
+border-left:1px solid var(--line);box-shadow:-6px 0 24px rgba(0,0,0,.10);z-index:60;
+display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
+.cop.open{transform:translateX(0)}
+.cop .chead{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy);
+display:flex;align-items:center;justify-content:space-between}
+.cop .x{cursor:pointer;color:var(--muted);font-size:18px;line-height:1}
+.cop .msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.cop .composer{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.cop .composer textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:9px;padding:9px;font:inherit;height:42px}
+.cop .composer button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:600;cursor:pointer}
+.cop .scard{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12px;cursor:pointer;margin:3px 0}
+.cop .scard:hover{border-color:var(--accent);color:var(--navy)}
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
@@ -275,7 +292,6 @@ def left_pane(sess):
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
-            A("Document Hierarchy", href="/document-hierarchy", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
             cls="section"),
         Div(Div("Recent chats", cls="lbl"),
@@ -289,6 +305,7 @@ def left_pane(sess):
             cls="section"),
         Div(Div("Help", cls="lbl"),
             A("📘 User Guide", href="/help", cls="navlink"),
+            A("🌳 Document Hierarchy", href="/document-hierarchy", cls="navlink"),
             A("🕸 Ontology", href="/ontology", cls="navlink"),
             A("Sign out", href="/logout", cls="navlink"),
             cls="section"),
@@ -371,11 +388,14 @@ async function sendMessage(e){if(e)e.preventDefault();if(streaming)return false;
     document.getElementById('msgs').scrollTop=1e9;}
   streaming=false;return false;}
 function openForm(id){var rp=document.getElementById('rbody');
+  if(!rp){window.open('/form-pdf/'+id,'_blank');return;}
   document.getElementById('rtitle').textContent='Form #'+id;document.getElementById('rclose').textContent='✕';
   fetch('/form/'+id).then(r=>r.text()).then(h=>{rp.innerHTML=h;});}
-function openDoc(id){if(!id)return;document.getElementById('rtitle').textContent='Document #'+id;
+function openDoc(id){if(!id)return;var rb=document.getElementById('rbody');
+  if(!rb){window.open('/document/'+id,'_blank');return;}
+  document.getElementById('rtitle').textContent='Document #'+id;
   document.getElementById('rclose').textContent='✕';
-  document.getElementById('rbody').innerHTML='<iframe class="pdf" src="/document/'+id+'?embed=1"></iframe>';}
+  rb.innerHTML='<iframe class="pdf" src="/document/'+id+'?embed=1"></iframe>';}
 function closePdf(){location.reload();}
 """)
 
@@ -493,12 +513,63 @@ def api_feed(sess, j: str = ""):
     return Div(*[feed_item(c) for c in changes], id="feed")
 
 
+# ── Copilot: collapsible right-hand chat (same agents as the Assistant) ───────
+def copilot():
+    """A slide-in chat drawer for the secondary pages — query the database with
+    the same orchestrator/agents while the page stays visible behind it."""
+    return Div(
+        Button("💬 Copilot", cls="cop-fab", id="copFab", onclick="cpToggle()"),
+        Div(
+            Div(Span("🤖 Copilot"), Span("✕", cls="x", onclick="cpToggle()"), cls="chead"),
+            Div(Div("Ask about tax forms, jurisdictions, deadlines or recent changes — "
+                    "I use the same agents as the Assistant.", cls="bubble assistant"),
+                *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in SUGGESTIONS[:3]],
+                id="cpMsgs", cls="msgs"),
+            Form(Textarea(name="msg", placeholder="Ask the database…", id="cpInp"),
+                 Button("Send", type="submit"),
+                 cls="composer", onsubmit="return cpSend(event)"),
+            cls="cop", id="copilot"),
+        id="copilotWrap")
+
+
+COPILOT_JS = Script("""
+function cpFill(t){var i=document.getElementById('cpInp');i.value=t;i.focus();}
+function cpToggle(){var c=document.getElementById('copilot');c.classList.toggle('open');
+  if(c.classList.contains('open'))document.getElementById('cpInp').focus();}
+function cpBubble(role,html){var m=document.getElementById('cpMsgs');
+  var d=document.createElement('div');d.className='bubble '+role;d.innerHTML=html;
+  m.appendChild(d);m.scrollTop=m.scrollHeight;return d;}
+let cpStreaming=false,cpSid='';
+async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
+  var i=document.getElementById('cpInp');var msg=i.value.trim();if(!msg)return false;
+  cpStreaming=true;cpBubble('user',msg.replace(/</g,'&lt;'));i.value='';
+  var b=cpBubble('assistant','<span style="color:#9aa">…</span>');var acc='';
+  var resp=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({msg:msg,sid:cpSid})});
+  var rd=resp.body.getReader(),dec=new TextDecoder(),buf='';
+  while(true){var r=await rd.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});
+    var idx;while((idx=buf.indexOf('\\n\\n'))>=0){var raw=buf.slice(0,idx);buf=buf.slice(idx+2);
+      var ev=raw.match(/^event: (.*)$/m),da=raw.match(/^data: (.*)$/m);if(!ev||!da)continue;
+      var type=ev[1],data=JSON.parse(da[1]);
+      if(type==='token'){if(acc===''){b.innerHTML='';}acc+=data.text;
+        b.innerHTML=linkMarkers(window.marked?marked.parse(acc):acc);}
+      else if(type==='tool_start'){var c=document.createElement('span');c.className='toolchip';
+        c.textContent='⚙ '+data.name;b.appendChild(c);}
+      else if(type==='session'&&data.sid){cpSid=data.sid;}
+    }
+    document.getElementById('cpMsgs').scrollTop=1e9;}
+  cpStreaming=false;return false;}
+""")
+
+
 # ── Secondary pages (traceability) ──────────────────────────────────────────
-def Page(*content, title="TaxHub"):
+def Page(*content, title="TaxHub", with_copilot=True):
+    extras = (copilot(), MARKED, JS, COPILOT_JS) if with_copilot else ()
     return (Title(title), CSS,
             Header(A("← Assistant", href="/", style="color:#ece3ee"),
                    style="background:#0f2740;padding:12px 24px"),
-            Div(*content, cls="wrap"))
+            Div(*content, cls="wrap"),
+            *extras)
 
 
 @rt("/dashboard")
