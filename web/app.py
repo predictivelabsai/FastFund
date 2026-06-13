@@ -54,34 +54,36 @@ SHORTCUTS = [
 ]
 
 CSS = Style("""
-:root{--navy:#0f2740;--navy2:#1b3a5b;--accent:#c8a24b;--bg:#f6f7f9;--line:#e3e6eb;
---green:#1c7c44;--amber:#b06b00;--text:#1d2430;--muted:#6b7686;--panel:#fff;}
+/* JTC Group brand palette (jtcgroup.com): purple #6B1766 / deep #550055 /
+   magenta accent #BA2A84 / slate text #48484F / light bg #F5F6F4 */
+:root{--navy:#6b1766;--navy2:#550055;--accent:#ba2a84;--bg:#f5f6f4;--line:#e6e3ec;
+--green:#1c7c44;--amber:#b06b00;--text:#48484f;--muted:#7a7a85;--panel:#fff;}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
 color:var(--text);background:var(--bg);line-height:1.5}
 a{color:var(--navy2);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:grid;grid-template-columns:280px 1fr 430px;height:100vh;overflow:hidden}
 .pane{height:100vh;overflow-y:auto}
-.left{background:var(--navy);color:#cdd7e3;padding:0}
-.left .brand{font-weight:700;font-size:18px;color:#fff;padding:16px 18px;border-bottom:1px solid #1c3856}
+.left{background:var(--navy);color:#ece3ee;padding:0}
+.left .brand{font-weight:700;font-size:18px;color:#fff;padding:16px 18px;border-bottom:1px solid #45114a}
 .left .brand span{color:var(--accent)}
-.left a{color:#cdd7e3;display:block}
-.section{padding:12px 16px;border-bottom:1px solid #14304c}
-.section .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7d92ab;margin-bottom:8px}
-.navlink{padding:6px 8px;border-radius:6px;font-size:14px}.navlink:hover{background:#173451;text-decoration:none}
-.newchat{display:block;background:var(--accent);color:#1a1300;text-align:center;font-weight:600;
+.left a{color:#ece3ee;display:block}
+.section{padding:12px 16px;border-bottom:1px solid #45114a}
+.section .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#c9a3c6;margin-bottom:8px}
+.navlink{padding:6px 8px;border-radius:6px;font-size:14px}.navlink:hover{background:#7a2474;text-decoration:none}
+.newchat{display:block;background:var(--accent);color:#fff;text-align:center;font-weight:600;
 padding:9px;border-radius:8px;margin:12px 16px}
 .newchat:hover{text-decoration:none;filter:brightness(1.05)}
 details.tree{margin:2px 0}details.tree>summary{cursor:pointer;font-size:13px;padding:3px 0;list-style:none}
 details.tree>summary::-webkit-details-marker{display:none}
-details.tree>summary:before{content:"▸ ";color:#7d92ab}details.tree[open]>summary:before{content:"▾ "}
-.tree .jur{font-weight:600;color:#e7eef6}.tree .cat{margin-left:12px;color:#b9c7d8}
-.tree .typ{margin-left:24px;color:#9fb2c7;font-size:12px}
-.formlink{margin-left:30px;display:block;font-size:12.5px;color:#cdd7e3;padding:2px 0;cursor:pointer}
+details.tree>summary:before{content:"▸ ";color:#c9a3c6}details.tree[open]>summary:before{content:"▾ "}
+.tree .jur{font-weight:600;color:#f3e9f3}.tree .cat{margin-left:12px;color:#d8c5d6}
+.tree .typ{margin-left:24px;color:#c9a3c6;font-size:12px}
+.formlink{margin-left:30px;display:block;font-size:12.5px;color:#ece3ee;padding:2px 0;cursor:pointer}
 .formlink:hover{color:#fff}
 .shortcut{font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer}
-.shortcut:hover{background:#173451}.shortcut b{color:var(--accent);font-family:ui-monospace,monospace}
-.sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#cdd7e3}.sess:hover{background:#173451}
+.shortcut:hover{background:#7a2474}.shortcut b{color:var(--accent);font-family:ui-monospace,monospace}
+.sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#ece3ee}.sess:hover{background:#7a2474}
 /* center */
 .center{display:flex;flex-direction:column;background:#fbfcfd}
 .center .chead{padding:14px 22px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy)}
@@ -213,7 +215,10 @@ def left_pane(sess):
             *[Div(B(p), " ", desc, cls="shortcut", onclick=f"fillChat({ex!r})")
               for p, desc, ex in SHORTCUTS],
             cls="section"),
-        Div(A("Sign out", href="/logout", cls="navlink"), cls="section"),
+        Div(Div("Help", cls="lbl"),
+            A("📘 User Guide", href="/help", cls="navlink"),
+            A("Sign out", href="/logout", cls="navlink"),
+            cls="section"),
         cls="pane left")
 
 
@@ -418,7 +423,7 @@ def api_feed(sess, j: str = ""):
 # ── Secondary pages (traceability) ──────────────────────────────────────────
 def Page(*content, title="TaxHub"):
     return (Title(title), CSS,
-            Header(A("← Assistant", href="/", style="color:#cdd7e3"),
+            Header(A("← Assistant", href="/", style="color:#ece3ee"),
                    style="background:#0f2740;padding:12px 24px"),
             Div(*content, cls="wrap"))
 
@@ -575,6 +580,62 @@ async def upload(sess, doc_file: UploadFile, jurisdiction: str = "JE",
         "form_key": key, "title": name[:160], "authority": "Uploaded",
         "url": None, "file_path": str(dest.relative_to(root)), "filing_type": "downloadable"})
     return RedirectResponse("/documents?uploaded=1", status_code=303)
+
+
+AUDIT = [
+    ("Luxembourg (ACD)", "Complete & submit PDF", "126 real fillable forms (200/300/500/710…)", "downloadable"),
+    ("Guernsey (gov.gg)", "PDF forms (main return online)", "71 real forms (registration, tax-cap returns…)", "downloadable"),
+    ("Jersey (Revenue Jersey)", "Online portal", "No downloadable form", "online"),
+    ("Ireland (Revenue)", "ROS e-file", "PDFs are TDM guidance, not forms", "online + reference"),
+    ("Cayman (DITC)", "DITC portal", "PDFs are user guides", "online + reference"),
+    ("BVI (ITA)", "BOSS portal (via agent)", "PDFs are guidance/methodology", "online + reference"),
+]
+
+
+@rt("/help")
+def help_page(sess):
+    if (r := require(sess)):
+        return r
+    legend = Div(*[Div(Span(v, style="font-weight:600"), cls="",
+                       style="padding:6px 0") for v in FILING_LABELS.values()])
+    audit = Table(
+        Tr(Th("Jurisdiction"), Th("How you actually file"), Th("What the site offers"), Th("filing_type")),
+        *[Tr(Td(j), Td(how), Td(offers), Td(ft)) for j, how, offers, ft in AUDIT])
+    shortcuts = Table(Tr(Th("Shortcut"), Th("Does")),
+                      *[Tr(Td(Code(p)), Td(desc)) for p, desc, _ in SHORTCUTS])
+    return Page(
+        H1("Help & User Guide"),
+        P("TaxHub helps a fund back office find the correct tax form to file, with "
+          "provenance back to the underlying law. Use the AI Assistant for free-text "
+          "questions, the Forms Tree to browse, or the shortcuts below.", cls="muted"),
+        P(A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn")),
+        H2("Filing types"),
+        P("Every form is labelled by how it is filed:"),
+        legend,
+        H2("Coverage audit — what each authority actually offers"),
+        P("Not every jurisdiction publishes downloadable forms; several file online. "
+          "We capture this honestly so you know what to expect:", cls="muted"),
+        audit,
+        H2("Assistant shortcuts"),
+        shortcuts,
+        H2("The Forms Tree"),
+        P("Browse by Jurisdiction → category (corporate tax, economic substance, AEOI…) "
+          "→ document type → form. Click any form to open its PDF (or the official portal "
+          "link for online-filed forms) in the right pane."),
+        title="Help · TaxHub")
+
+
+@rt("/user-guide-pdf")
+def user_guide_pdf(sess):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "docs" / "taxhub_user_guide.pdf"
+    if not p.exists():
+        return Page(H1("User guide PDF not generated yet"),
+                    P("Run scripts/generate_user_guide.py.", cls="muted"))
+    return Response(p.read_bytes(), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="taxhub_user_guide.pdf"'})
 
 
 @rt("/changes")
