@@ -32,6 +32,11 @@ CATEGORY_LABELS = {
 }
 JUR_NAMES = {"JE": "Jersey", "GG": "Guernsey", "LU": "Luxembourg",
              "IE": "Ireland", "KY": "Cayman Islands", "VG": "British Virgin Islands"}
+FILING_LABELS = {"downloadable": "📄 Downloadable form", "online": "🌐 Online filing",
+                 "reference": "📘 Reference / guidance"}
+FORM_TYPE_LABELS = {"return": "Return", "notification": "Notification",
+                    "declaration": "Declaration", "registration": "Registration",
+                    "report": "Report", "guidance": "Guidance", "form": "Form"}
 
 SUGGESTIONS = [
     "form: Cayman economic substance notification",
@@ -368,14 +373,23 @@ def form_view(sess, form_id: int):
               Div(P("No local PDF stored yet.", cls="muted"),
                   A("Open official source ↗", href=f.get("url") or "#", target="_blank", cls="btn")
                   if f.get("url") else ""))
+    filing = f.get("filing_type") or "downloadable"
+    leg = f.get("legislation_ref")
     return Div(
-        H3(f["title"], style="margin:0 0 8px"),
-        Dl(Dt("Jurisdiction"), Dd(JUR_NAMES.get(f["jurisdiction_code"], f["jurisdiction_code"])),
+        H3(f["title"], style="margin:0 0 6px"),
+        Div(FILING_LABELS.get(filing, filing), style="display:inline-block;font-weight:600;"
+            "font-size:12px;padding:3px 10px;border-radius:20px;background:#eef4fb;"
+            "color:#1b3a5b;margin-bottom:6px"),
+        Dl(Dt("Filing type"), Dd(FILING_LABELS.get(filing, filing)),
+           Dt("Jurisdiction"), Dd(JUR_NAMES.get(f["jurisdiction_code"], f["jurisdiction_code"])),
            Dt("Category"), Dd(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "—")),
+           Dt("Document type"), Dd(FORM_TYPE_LABELS.get(f.get("form_type"), f.get("form_type") or "—")),
            Dt("Who files"), Dd(f.get("who_files") or "—"),
            Dt("Deadline"), Dd(f.get("deadline") or "—"),
            Dt("Frequency"), Dd(f.get("frequency") or "—"),
-           Dt("Authority"), Dd(f.get("authority") or "—"), cls="formmeta"),
+           Dt("Authority"), Dd(f.get("authority") or "—"),
+           *([Dt("Underlying law"), Dd(A("View legislation ↗", href=leg, target="_blank"))]
+             if leg else []), cls="formmeta"),
         Div(viewer, style="margin-top:12px"))
 
 
@@ -508,20 +522,28 @@ def documents(sess, uploaded: str = ""):
         Select(Option("All categories", value=""),
                *[Option(CATEGORY_LABELS.get(c, c), value=c) for c in cats],
                id="doccat", onchange="filterDocs()", style="padding:8px"),
-        style="display:flex;gap:8px;margin:12px 0")
-    rows = [Tr(Td(f["jurisdiction_code"]), Td(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "")),
+        Select(Option("All filing types", value=""),
+               *[Option(v, value=k) for k, v in FILING_LABELS.items()],
+               id="docfiling", onchange="filterDocs()", style="padding:8px"),
+        style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap")
+    rows = [Tr(Td(f["jurisdiction_code"]),
+               Td(FILING_LABELS.get(f.get("filing_type") or "downloadable", "")),
+               Td(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "")),
                Td(A(f["title"], href=f"/form/{f['id']}")),
                Td("📄" if f.get("file_path") else "link"),
                cls="docrow", **{"data-j": f["jurisdiction_code"], "data-c": f.get("category") or "",
+                                "data-f": f.get("filing_type") or "downloadable",
                                 "data-t": (f["title"] or "").lower()})
             for f in with_pdf]
-    browser = Table(Tr(Th("Jurisdiction"), Th("Category"), Th("Document"), Th("PDF")),
+    browser = Table(Tr(Th("Jur"), Th("Filing type"), Th("Category"), Th("Document"), Th("PDF")),
                     *rows, id="doctable")
     js = Script("""
 function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCase();
-  var j=document.getElementById('docjur').value,c=document.getElementById('doccat').value,n=0;
+  var j=document.getElementById('docjur').value,c=document.getElementById('doccat').value,
+      ff=document.getElementById('docfiling').value,n=0;
   document.querySelectorAll('#doctable tr.docrow').forEach(function(r){
-    var ok=(!q||r.dataset.t.indexOf(q)>=0)&&(!j||r.dataset.j===j)&&(!c||r.dataset.c===c);
+    var ok=(!q||r.dataset.t.indexOf(q)>=0)&&(!j||r.dataset.j===j)&&(!c||r.dataset.c===c)
+      &&(!ff||r.dataset.f===ff);
     r.style.display=ok?'':'none';if(ok)n++;});
   document.getElementById('doccount').textContent=n;}
 """)
@@ -551,7 +573,7 @@ async def upload(sess, doc_file: UploadFile, jurisdiction: str = "JE",
     store.upsert_form({
         "jurisdiction_code": jurisdiction, "category": category, "form_type": "form",
         "form_key": key, "title": name[:160], "authority": "Uploaded",
-        "url": None, "file_path": str(dest.relative_to(root))})
+        "url": None, "file_path": str(dest.relative_to(root)), "filing_type": "downloadable"})
     return RedirectResponse("/documents?uploaded=1", status_code=303)
 
 

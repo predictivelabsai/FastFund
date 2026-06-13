@@ -46,6 +46,10 @@ def scrape_forms(jurisdiction: str | None = None, download: bool = True,
         for form in jur.get("forms", []):
             curated_keys.add(form["form_key"])
             mode = form.get("mode", "download")
+            ftype = form.get("filing_type") or (
+                "online" if mode == "portal"
+                else "reference" if form.get("form_type") == "guidance"
+                else "downloadable")
             rec = {
                 "jurisdiction_code": code, "category": form.get("category"),
                 "form_type": form.get("form_type"), "form_key": form["form_key"],
@@ -54,6 +58,7 @@ def scrape_forms(jurisdiction: str | None = None, download: bool = True,
                 "year": form.get("year"), "who_files": form.get("who_files"),
                 "deadline": form.get("deadline"), "frequency": form.get("frequency"),
                 "summary": form.get("summary"), "legislation_ref": form.get("legislation_ref"),
+                "filing_type": ftype,
             }
             if download and mode == "download":
                 path = scraper.fetch_form_pdf(form)
@@ -102,7 +107,8 @@ def scrape_forms(jurisdiction: str | None = None, download: bool = True,
                     "jurisdiction_code": code, "category": icat, "form_type": itype,
                     "form_key": key, "title": title[:160], "authority": jur.get("authority"),
                     "url": link["url"], "file_path": str(path.relative_to(ROOT)),
-                    "year": str(g["yr"]) if g["yr"] else None})
+                    "year": str(g["yr"]) if g["yr"] else None,
+                    "filing_type": jur.get("index_filing_type", "downloadable")})
                 recorded += 1
                 print(f"  [{code}] {key:<34} pdf ✓ ({icat}, y{g['yr'] or '—'})")
     return {"recorded": recorded, "downloaded": downloaded,

@@ -148,6 +148,7 @@ class SqliteStore(Storage):
             frequency         TEXT,
             summary           TEXT,
             legislation_ref   TEXT,
+            filing_type       TEXT,
             first_seen        TEXT,
             last_seen         TEXT,
             UNIQUE(jurisdiction_code, form_key)
@@ -581,7 +582,7 @@ class SqliteStore(Storage):
     # ── Tax forms ──────────────────────────────────────────────────────────
     _FORM_COLS = ("jurisdiction_code", "category", "form_type", "form_key", "title",
                   "authority", "url", "file_path", "year", "who_files", "deadline",
-                  "frequency", "summary", "legislation_ref")
+                  "frequency", "summary", "legislation_ref", "filing_type")
 
     def upsert_form(self, form: dict) -> int:
         now = utcnow()

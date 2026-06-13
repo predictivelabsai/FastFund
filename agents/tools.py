@@ -12,6 +12,13 @@ from langchain_core.tools import tool
 import taxstore as store
 from rag import retrieval as taxrag
 
+# How the form is filed — make this unambiguous in answers.
+FILING_LABELS = {
+    "downloadable": "Downloadable PDF form",
+    "online": "Online filing (web portal / e-file — no PDF to complete)",
+    "reference": "Reference / guidance (not a fileable form)",
+}
+
 
 @tool
 def document_agent(need: str) -> str:
@@ -24,12 +31,14 @@ def document_agent(need: str) -> str:
         return "No matching tax form found in the catalogue. Consider web_search_agent."
     lines = ["Matching tax forms:"]
     for f in forms:
+        filing = FILING_LABELS.get(f.get("filing_type") or "downloadable", "—")
         lines.append(
             f"- **{f['title']}** ({f['jurisdiction_code']}, {f.get('category') or '—'}/"
             f"{f.get('form_type') or 'form'}) [form:{f['id']}]\n"
-            f"  Who files: {f.get('who_files') or '—'}. Deadline: {f.get('deadline') or '—'}. "
-            f"Frequency: {f.get('frequency') or '—'}.")
-    return "\n".join(lines)
+            f"  Filing type: {filing}. Who files: {f.get('who_files') or '—'}. "
+            f"Deadline: {f.get('deadline') or '—'}. Frequency: {f.get('frequency') or '—'}.")
+    return ("Matching tax forms (note the Filing type — some are downloadable PDFs, "
+            "others are filed online):\n" + "\n".join(lines[1:])) if lines[1:] else lines[0]
 
 
 @tool

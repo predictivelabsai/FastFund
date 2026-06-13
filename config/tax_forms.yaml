@@ -23,6 +23,7 @@ jurisdictions:
     forms_index: https://www.gov.je/TaxesMoney/IncomeTax/Companies/Pages/index.aspx
     index_category: corporate_tax
     index_form_type: form
+    index_filing_type: online
     forms:
       - form_key: corporate_tax_return
         title: Company Tax Return (Jersey)
@@ -51,6 +52,7 @@ jurisdictions:
     forms_index: https://www.gov.gg/revenue-service/income-tax-forms
     index_category: corporate_tax
     index_form_type: form
+    index_filing_type: downloadable
     index_match: CHttpHandler          # gov.gg serves PDFs via CHttpHandler.ashx?id=N
     forms:
       - form_key: company_income_tax_return
@@ -71,6 +73,7 @@ jurisdictions:
     forms_index: https://impotsdirects.public.lu/fr/formulaires/collectivites.html
     index_category: corporate_tax
     index_form_type: form
+    index_filing_type: downloadable
     forms:
       - form_key: corporate_income_tax_return_500
         title: Déclaration pour l'impôt sur le revenu des collectivités (Form 500)
@@ -90,6 +93,7 @@ jurisdictions:
     forms_index: https://www.revenue.ie/en/companies-and-charities/corporation-tax-for-companies/corporation-tax/index.aspx
     index_category: corporate_tax
     index_form_type: form
+    index_filing_type: reference
     forms:
       - form_key: form_ct1
         title: Corporation Tax Return — Form CT1 (Ireland)
@@ -108,6 +112,7 @@ jurisdictions:
     forms_index: https://www.ditc.ky/economic-substance/es-documents/
     index_category: economic_substance
     index_form_type: form
+    index_filing_type: reference
     forms:
       - form_key: economic_substance_notification_guide
         title: Economic Substance Notification — User Guide (Cayman)
@@ -136,6 +141,7 @@ jurisdictions:
     forms_index: https://bviita.vg/economic-substance
     index_category: economic_substance
     index_form_type: form
+    index_filing_type: reference
     forms:
       - form_key: economic_substance_filing
         title: Economic Substance Filing (BVI, via BOSS)

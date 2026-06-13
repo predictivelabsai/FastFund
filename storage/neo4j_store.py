@@ -508,13 +508,13 @@ class Neo4jStore(Storage):
     # ── Tax forms ──────────────────────────────────────────────────────────
     _FORM_PROPS = ("jurisdiction_code", "category", "form_type", "form_key", "title",
                    "authority", "url", "file_path", "year", "who_files", "deadline",
-                   "frequency", "summary", "legislation_ref")
+                   "frequency", "summary", "legislation_ref", "filing_type")
     _FORM_RETURN = (
         "f.uid AS id, f.jurisdiction_code AS jurisdiction_code, f.category AS category, "
         "f.form_type AS form_type, f.form_key AS form_key, f.title AS title, "
         "f.authority AS authority, f.url AS url, f.file_path AS file_path, "
         "f.year AS year, f.who_files AS who_files, f.deadline AS deadline, "
-        "f.frequency AS frequency, f.summary AS summary, f.legislation_ref AS legislation_ref")
+        "f.frequency AS frequency, f.summary AS summary, f.legislation_ref AS legislation_ref, f.filing_type AS filing_type")
 
     def upsert_form(self, form: dict) -> int:
         # Only provided keys → partial upserts aren't destructive.
