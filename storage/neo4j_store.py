@@ -712,6 +712,10 @@ class Neo4jStore(Storage):
             s.run("MATCH (o:Obligation {uid:$i}) SET o.verified=$v, o.updated_at=$now",
                   i=obligation_id, v=bool(verified), now=utcnow())
 
+    def delete_obligation(self, obligation_id: int) -> None:
+        with self._session() as s:
+            s.run("MATCH (o:Obligation {uid:$i}) DETACH DELETE o", i=obligation_id)
+
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
         with self._session() as s:

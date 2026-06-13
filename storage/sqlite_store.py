@@ -800,6 +800,10 @@ class SqliteStore(Storage):
             c.execute(text("UPDATE obligations SET verified=:v, updated_at=:n WHERE id=:i"),
                       {"v": 1 if verified else 0, "n": utcnow(), "i": obligation_id})
 
+    def delete_obligation(self, obligation_id: int) -> None:
+        with self.conn() as c:
+            c.execute(text("DELETE FROM obligations WHERE id=:i"), {"i": obligation_id})
+
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
         now = utcnow()

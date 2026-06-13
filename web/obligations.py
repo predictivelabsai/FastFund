@@ -13,6 +13,8 @@ and the entity's financial year-end as the obligation ``period``.
 """
 from __future__ import annotations
 
+import re
+
 # Always-relevant obligation categories for a fund-domiciled entity.
 _BASE_CATEGORIES = {"corporate_tax", "economic_substance", "aeoi"}
 
@@ -37,19 +39,41 @@ def relevant_categories(entity: dict) -> set[str]:
     return cats
 
 
+def _norm_title(title: str, jc: str) -> str:
+    """Normalise a form title for de-duplication: lowercase, drop the jurisdiction
+    name/code and any parenthetical, collapse punctuation. Catches catalogue
+    near-duplicates (e.g. two 'Economic Substance Notification — User Guide' rows)."""
+    t = (title or "").lower()
+    t = re.sub(r"\(.*?\)", " ", t)                 # drop "(Cayman)" etc.
+    for w in ("cayman", "jersey", "guernsey", "luxembourg", "ireland", jc.lower()):
+        t = t.replace(w, " ")
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
 def determine_obligations(store, entity: dict) -> list[dict]:
-    """Match curated catalogue forms to the entity → obligation dicts (not saved)."""
+    """Match curated catalogue forms to the entity → obligation dicts (not saved).
+    De-duplicates near-identical titles within a jurisdiction (prefers the entry
+    that carries a filing deadline)."""
     cats = relevant_categories(entity)
-    obs, seen = [], set()
+    obs, seen_ids = [], set()
+    best: dict[tuple, dict] = {}            # (jc, normalised title) -> chosen form
     for jc in (entity.get("jurisdictions") or []):
         for f in store.list_forms(jurisdiction_code=jc, limit=2000):
             if (f.get("form_key") or "").startswith("auto_"):
                 continue  # bulk-discovered PDFs aren't obligations — only curated forms
             if (f.get("category") or "") not in cats:
                 continue
-            if f["id"] in seen:
+            if f["id"] in seen_ids:
                 continue
-            seen.add(f["id"])
+            seen_ids.add(f["id"])
+            key = (jc, f.get("category"), _norm_title(f.get("title"), jc))
+            cur = best.get(key)
+            if cur is None or (not cur.get("deadline") and f.get("deadline")):
+                best[key] = f
+    for jc in (entity.get("jurisdictions") or []):
+        for (k_jc, _cat, _t), f in best.items():
+            if k_jc != jc:
+                continue
             obs.append({
                 "entity_id": entity["id"], "form_id": f["id"], "title": f.get("title"),
                 "jurisdiction_code": f.get("jurisdiction_code") or jc,
@@ -66,7 +90,14 @@ def run_determine(store, entity_id: int) -> dict:
     if not e:
         return {"error": "entity not found"}
     obs = determine_obligations(store, e)
+    keep = {o["form_id"] for o in obs}
     for o in obs:
         store.upsert_obligation(o)
-    return {"entity": e["name"], "obligations": len(obs),
+    # Reconcile: prune obligations that no longer apply (jurisdiction/activity
+    # change, or de-duplicated catalogue rows) so the set is authoritative.
+    pruned = 0
+    for ex in store.list_obligations(entity_id=entity_id):
+        if ex["form_id"] not in keep:
+            store.delete_obligation(ex["id"]); pruned += 1
+    return {"entity": e["name"], "obligations": len(obs), "pruned": pruned,
             "categories": sorted(relevant_categories(e))}

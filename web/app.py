@@ -54,6 +54,14 @@ OB_STATUS_LABELS = {"not_started": "Not started", "in_progress": "In progress",
 OB_STATUS_COLOR = {"not_started": "#7a7a85", "in_progress": "#b06b00",
                    "prepared": "#6b1766", "filed": "#1c7c44", "confirmed": "#1c7c44",
                    "na": "#9a93a6"}
+
+
+def ob_status_badge(status):
+    s = status or "not_started"
+    col = OB_STATUS_COLOR.get(s, "#7a7a85")
+    return Span(OB_STATUS_LABELS.get(s, s),
+                style=f"display:inline-block;background:{col}22;color:{col};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
 ACTIVITY_OPTIONS = ["fund management", "holding", "finance & leasing",
                     "headquartering", "intellectual property", "distribution & service centre"]
 # A few synthetic entities so the feature is demoable before real data is imported.
@@ -333,6 +341,7 @@ def left_pane(sess):
         Div(Div("Navigate", cls="lbl"),
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Entities", href="/entities", cls="navlink"),
+            A("Obligations", href="/obligations", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
@@ -623,10 +632,35 @@ def dashboard(sess):
     jurs = store.list_jurisdictions_with_counts()
     metrics = {"entities": store.count_entities(),
                **{k: v for k, v in st.items() if not isinstance(v, list)}}
+    # Compliance roll-up across all obligations.
+    from collections import Counter
+    all_obs = store.list_obligations(limit=10000)
+    by_status = Counter(o.get("status") or "not_started" for o in all_obs)
+    total = len(all_obs)
+    done = by_status.get("filed", 0) + by_status.get("confirmed", 0)
+    pct = round(100 * done / total) if total else 0
+    unver = sum(1 for o in all_obs if not o.get("verified"))
+    compliance = Div(
+        H2("Compliance"),
+        (Div(
+            Div(Span(f"{pct}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+                Span(" filed / confirmed", style="color:var(--muted)"),
+                style="margin-bottom:6px"),
+            P(A(f"{total} obligations", href="/obligations"), " across ",
+              A(f"{store.count_entities()} entities", href="/entities"), " · ",
+              A(f"{unver} awaiting sign-off", href="/obligations"),
+              style="color:var(--muted);font-size:13px"),
+            Table(Tr(Th("Status"), Th("Count")),
+                  *[Tr(Td(A(ob_status_badge(s), href=f"/obligations?status={s}")),
+                       Td(str(by_status.get(s, 0)))) for s in OB_STATUS if by_status.get(s)]),
+        ) if total else P("No obligations yet — open an entity and click "
+                          "“Determine obligations”.", cls="muted")),
+        style="margin:14px 0")
     return Page(H1("Dashboard"),
         Table(Tr(Th("Metric"), Th("Count")),
               *[Tr(Td(A(k, href="/entities") if k == "entities" else k), Td(str(v)))
                 for k, v in metrics.items()]),
+        compliance,
         H2("Jurisdictions"),
         Table(Tr(Th("Code"), Th("Documents")),
               *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
@@ -873,10 +907,25 @@ def entities(sess, added: str = ""):
     if (r := require(sess)):
         return r
     ents = store.list_entities(limit=1000)
+    from collections import Counter
+    all_obs = store.list_obligations(limit=10000)
+    n_by_ent = Counter(o["entity_id"] for o in all_obs)
+    done_by_ent = Counter(o["entity_id"] for o in all_obs
+                          if (o.get("status") in ("filed", "confirmed")))
+
+    def ob_chip(eid):
+        n = n_by_ent.get(eid, 0)
+        if not n:
+            return Span("—", cls="muted")
+        return Span(f"{done_by_ent.get(eid, 0)}/{n} filed",
+                    style="display:inline-block;background:#efeaf3;color:#6b1766;"
+                          "border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600")
+
     rows = [Tr(Td(A(e["name"], href=f"/entity/{e['id']}")),
                Td(e.get("type") or "—"), Td(e.get("domicile") or "—"),
                Td(_jur_badges(e.get("jurisdictions"))),
-               Td(e.get("fy_end") or "—"), Td(e.get("client_ref") or "—"))
+               Td(e.get("fy_end") or "—"), Td(ob_chip(e["id"])),
+               Td(e.get("client_ref") or "—"))
             for e in ents]
     add_form = Form(
         H3("Add an entity"),
@@ -908,7 +957,7 @@ def entities(sess, added: str = ""):
         add_form, import_form,
         H2("Portfolio"),
         (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Jurisdictions"),
-                  Th("FY end"), Th("Client ref")), *rows) if rows
+                  Th("FY end"), Th("Obligations"), Th("Client ref")), *rows) if rows
          else P("No entities yet — add one above or import a CSV.", cls="muted")),
         title="Entities · TaxHub")
 
@@ -1040,6 +1089,47 @@ def obligation_verify(sess, ob_id: int):
     if o:
         store.set_obligation_verified(ob_id, not o.get("verified"))
     return RedirectResponse(f"/entity/{o['entity_id']}" if o else "/entities", status_code=303)
+
+
+@rt("/obligations")
+def obligations_all(sess, status: str = "", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    obs = store.list_obligations(status=status or None, limit=10000)
+    if jur:
+        obs = [o for o in obs if o.get("jurisdiction_code") == jur]
+    ents = {e["id"]: e["name"] for e in store.list_entities(limit=2000)}
+    jurs = sorted({o.get("jurisdiction_code") for o in store.list_obligations(limit=10000) if o.get("jurisdiction_code")})
+    def opt(v, label, cur):
+        return Option(label, value=v, selected=(v == cur))
+    filters = Div(
+        Select(opt("", "All statuses", status),
+               *[opt(s, OB_STATUS_LABELS[s], status) for s in OB_STATUS],
+               onchange="location='/obligations?status='+this.value+'&jur='+'" + jur + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        Select(opt("", "All jurisdictions", jur),
+               *[opt(c, JUR_NAMES.get(c, c), jur) for c in jurs],
+               onchange="location='/obligations?jur='+this.value+'&status='+'" + status + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px;margin-left:6px"),
+        Span(f"  {len(obs)} obligations", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;align-items:center;margin:12px 0")
+    rows = [Tr(Td(A(ents.get(o["entity_id"], "—"), href=f"/entity/{o['entity_id']}")),
+               Td(o.get("jurisdiction_code")),
+               Td(A(o.get("title") or "form", href=f"/form-pdf/{o['form_id']}", target="_blank")),
+               Td(CATEGORY_LABELS.get(o.get("category"), o.get("category") or "—")),
+               Td(o.get("deadline") or "—"),
+               Td(ob_status_badge(o.get("status"))),
+               Td("✓" if o.get("verified") else "—"))
+            for o in obs]
+    return Page(
+        H1("Obligations"),
+        P("Every filing obligation across the portfolio. Filter by status or "
+          "jurisdiction; click an entity or open a form.", cls="muted"),
+        filters,
+        (Table(Tr(Th("Entity"), Th("Jur"), Th("Obligation"), Th("Category"),
+                  Th("Filing deadline"), Th("Status"), Th("Verified")), *rows)
+         if rows else P("No obligations match.", cls="muted")),
+        title="Obligations · TaxHub")
 
 
 @rt("/entity/{entity_id}/delete", methods=["POST"])

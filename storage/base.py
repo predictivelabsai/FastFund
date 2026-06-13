@@ -305,6 +305,10 @@ class Storage(abc.ABC):
     def set_obligation_verified(self, obligation_id: int, verified: bool) -> None:
         ...
 
+    @abc.abstractmethod
+    def delete_obligation(self, obligation_id: int) -> None:
+        """Remove an obligation (used by Determine to prune no-longer-applicable rows)."""
+
     # ── Chat history (assistant sessions) ──────────────────────────────────
     @abc.abstractmethod
     def create_chat_session(self, user_email: str, title: str = "") -> int:
