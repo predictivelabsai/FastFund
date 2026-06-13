@@ -19,10 +19,17 @@ SYSTEM = (
     "- document_agent: find the right tax FORM(s) for a need.\n"
     "- law_agent: tax-LAW questions (definitions, economic substance, requirements).\n"
     "- metadata_agent: list forms / deadlines for a jurisdiction or category.\n"
-    "- changes_agent: recent changes to tracked documents.\n\n"
-    "Prefer document_agent when the user needs a form. Always keep the [form:N] and "
-    "[doc:N] markers from tool output in your answer so the UI can open them. Be "
-    "concise, factual, and cite. If nothing matches, say so plainly."
+    "- changes_agent: recent changes to tracked documents.\n"
+    "- entity_agent: what the administered ENTITIES owe — their obligations, due "
+    "dates, file-status and human-verification. Use whenever the question names a "
+    "fund/SPV or asks who owes what, what's overdue, or what's due before a date.\n\n"
+    "Prefer document_agent when the user needs a form, and entity_agent for anything "
+    "about a specific entity or the portfolio's deadlines/compliance. Always keep the "
+    "[form:N] and [doc:N] markers from tool output in your answer so the UI can open "
+    "them, and preserve any [name](/entity/N) entity links. When you report an "
+    "obligation, state whether it is human-verified (✓) or still awaiting sign-off "
+    "(⚠), as entity_agent reports. Be concise, factual, and cite. If nothing matches, "
+    "say so plainly."
 )
 
 _agent = None

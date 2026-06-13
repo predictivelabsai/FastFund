@@ -115,7 +115,18 @@ dates. Two layers, Sphere-style:
    - `/coverage`: two Plotly heatmaps (portfolio purple, catalogue green) + a
      summary header (book % filed, catalogue totals by filing type). Cells link
      out / hover to the filing-type split.
-6. **entity_agent** for Copilot/Assistant + expert-verified badges across answers.
+6. **entity_agent** for Copilot/Assistant + expert-verified badges across answers. ✅ DONE
+   - `entity_agent` tool (agents/tools.py) over entities + obligations + the Monitor
+     due-date resolver: focus one entity or scan the book, filter by category /
+     status / due_before (ISO) / due_within_days; each row shows resolved due date,
+     urgency, status and a ✓ verified / ⚠ awaiting-sign-off flag. Registered in
+     ALL_TOOLS; orchestrator routes to it for entity/portfolio/deadline questions
+     and is told to surface the verification flag. Answers like "what does Aurora
+     owe this year?" and "which entities have economic-substance due before 30 Sep?".
+   - **UX:** the Navigate pages now share the Assistant's 3-pane shell — left nav,
+     centre content, and a persistent **Copilot** pane on the right (replacing the
+     changes feed) that chats with the same agents while the page stays visible.
+     Recent chats moved directly under "New chat" in the left rail.
 
 Each phase is independently shippable and deploys via the existing pipeline.
 No new infrastructure — new nodes/tables in AuraDB, new routes in the FastHTML app.

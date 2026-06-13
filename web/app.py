@@ -135,6 +135,13 @@ details.tree>summary:before{content:"▸ ";color:#c9a3c6}details.tree[open]>summ
 .sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#ece3ee}.sess:hover{background:#7a2474}
 /* center */
 .center{display:flex;flex-direction:column;background:#fbfcfd}
+/* centerdoc: scrollable document content (Navigate pages), not a chat column */
+.pane.centerdoc{display:block;overflow-y:auto;background:#fbfcfd}
+.centerdoc .wrap{max-width:920px;margin:0 auto;padding:26px 28px}
+/* copilot pane reuses .right; tighten chat spacing for the narrower column */
+.copilot-pane .msgs{padding:16px}
+.copilot-pane .composer{padding:12px 14px}
+.copilot-pane .scard{max-width:100%}
 .center .chead{padding:14px 22px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy)}
 .msgs{flex:1;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:14px}
 .bubble{max-width:760px;padding:12px 16px;border-radius:12px;font-size:14.5px;white-space:normal}
@@ -339,6 +346,10 @@ def left_pane(sess):
     return Div(
         Div("JTC ", Span("TaxHub"), cls="brand"),
         A("+ New chat", href="/", cls="newchat"),
+        Div(Div("Recent chats", cls="lbl"),
+            *[A(s.get("title") or "Chat", href=f"/?sid={s['id']}", cls="sess")
+              for s in sessions] or [Div("No chats yet", cls="muted", style="font-size:12px")],
+            cls="section"),
         Div(Div("Navigate", cls="lbl"),
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Entities", href="/entities", cls="navlink"),
@@ -348,10 +359,6 @@ def left_pane(sess):
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
-            cls="section"),
-        Div(Div("Recent chats", cls="lbl"),
-            *[A(s.get("title") or "Chat", href=f"/?sid={s['id']}", cls="sess")
-              for s in sessions] or [Div("No chats yet", cls="muted", style="font-size:12px")],
             cls="section"),
         Div(Div("Tax Forms Tree", cls="lbl"), tree_component(), cls="section"),
         Div(Div("Shortcuts", cls="lbl"),
@@ -568,23 +575,31 @@ def api_feed(sess, j: str = ""):
     return Div(*[feed_item(c) for c in changes], id="feed")
 
 
-# ── Copilot: collapsible right-hand chat (same agents as the Assistant) ───────
+# ── Copilot: persistent right-hand chat pane (same agents as the Assistant) ───
+COPILOT_SUGGESTIONS = [
+    "What does Aurora Global Fund owe this year?",
+    "Which entities have economic-substance filings due before 30 September?",
+    "Show me every overdue obligation",
+    "form: Cayman economic substance notification",
+]
+
+
 def copilot():
-    """A slide-in chat drawer for the secondary pages — query the database with
-    the same orchestrator/agents while the page stays visible behind it."""
+    """Right-hand chat pane for the Navigate pages — query the database with the
+    same orchestrator/agents while the page stays visible alongside it (the third
+    pane of the 3-pane layout, in place of the changes feed)."""
     return Div(
-        Button("💬 Copilot", cls="cop-fab", id="copFab", onclick="cpToggle()"),
-        Div(
-            Div(Span("🤖 Copilot"), Span("✕", cls="x", onclick="cpToggle()"), cls="chead"),
-            Div(Div("Ask about tax forms, jurisdictions, deadlines or recent changes — "
-                    "I use the same agents as the Assistant.", cls="bubble assistant"),
-                *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in SUGGESTIONS[:3]],
-                id="cpMsgs", cls="msgs"),
-            Form(Textarea(name="msg", placeholder="Ask the database…", id="cpInp"),
-                 Button("Send", type="submit"),
-                 cls="composer", onsubmit="return cpSend(event)"),
-            cls="cop", id="copilot"),
-        id="copilotWrap")
+        Div(Span("🤖 Copilot"),
+            Span("chat with your data", style="font-weight:400;color:var(--muted);font-size:12px"),
+            cls="rhead"),
+        Div(Div("Ask about your entities, obligations, deadlines, forms or recent "
+                "changes — I use the same agents as the Assistant.", cls="bubble assistant"),
+            *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in COPILOT_SUGGESTIONS],
+            id="cpMsgs", cls="msgs"),
+        Form(Textarea(name="msg", placeholder="Ask the database…", id="cpInp"),
+             Button("Send", type="submit"),
+             cls="composer", onsubmit="return cpSend(event)"),
+        cls="pane right copilot-pane", id="copilotPane")
 
 
 COPILOT_JS = Script("""
@@ -617,14 +632,15 @@ async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
 """)
 
 
-# ── Secondary pages (traceability) ──────────────────────────────────────────
-def Page(*content, title="TaxHub", with_copilot=True):
-    extras = (copilot(), MARKED, JS, COPILOT_JS) if with_copilot else ()
+# ── Secondary pages: same 3-pane shell as the Assistant ──────────────────────
+# left = nav, center = the page content, right = the Copilot (in place of the
+# changes feed). Pass sess so the left pane can show recent chats + sign-out.
+def Page(sess, *content, title="TaxHub", with_copilot=True):
+    center = Div(Div(*content, cls="wrap"), cls="pane center centerdoc")
+    right = copilot() if with_copilot else Div(cls="pane right")
     return (Title(title), CSS,
-            Header(A("← Assistant", href="/", style="color:#ece3ee"),
-                   style="background:#0f2740;padding:12px 24px"),
-            Div(*content, cls="wrap"),
-            *extras)
+            Div(left_pane(sess), center, right, cls="app"),
+            MARKED, JS, COPILOT_JS)
 
 
 @rt("/dashboard")
@@ -677,7 +693,7 @@ def dashboard(sess):
                     Td(urgency_badge(r["urgency"]))) for r in nxt])
          if nxt else P("Nothing overdue or due in the next 90 days.", cls="muted")),
         style="margin:14px 0") if total else ""
-    return Page(H1("Dashboard"),
+    return Page(sess, H1("Dashboard"),
         Table(Tr(Th("Metric"), Th("Count")),
               *[Tr(Td(A(k, href="/entities") if k == "entities" else k), Td(str(v)))
                 for k, v in metrics.items()]),
@@ -695,7 +711,7 @@ def jurisdictions(sess):
     if (r := require(sess)):
         return r
     jurs = store.list_jurisdictions_with_counts()
-    return Page(H1("Jurisdictions"),
+    return Page(sess, H1("Jurisdictions"),
         Table(Tr(Th("Code"), Th("Name"), Th("Documents")),
               *[Tr(Td(j["code"]), Td(A(JUR_NAMES.get(j["code"], j["code"]),
                 href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"]))) for j in jurs]))
@@ -706,7 +722,7 @@ def jurisdiction(sess, code: str):
     if (r := require(sess)):
         return r
     docs = store.list_documents_for_jurisdiction(code)
-    return Page(H1(JUR_NAMES.get(code, code)),
+    return Page(sess, H1(JUR_NAMES.get(code, code)),
         Table(Tr(Th("Document"), Th("Type"), Th("Versions"), Th("Status")),
               *[Tr(Td(A(d["title"], href=f"/document/{d['id']}")), Td(d.get("doc_type", "")),
                    Td(str(d.get("versions", 0))), Td(d.get("status", ""))) for d in docs]),
@@ -737,7 +753,7 @@ def document(sess, doc_id: int, embed: int = 0):
             or [Li("None", cls="muted")]))
     if embed:
         return (CSS, Div(body, cls="wrap"))
-    return Page(body, title=f"{d['title'][:40]} · TaxHub")
+    return Page(sess, body, title=f"{d['title'][:40]} · TaxHub")
 
 
 # ── Document Hierarchy (Plotly tree: Jurisdiction ▸ Category ▸ Form type ▸ Form) ──
@@ -972,7 +988,7 @@ def entities(sess, added: str = ""):
         Input(type="file", name="csv_file", accept=".csv", required=True),
         Button("Import CSV", cls="btn", style="margin-left:8px"),
         method="post", action="/entities/import", enctype="multipart/form-data")
-    return Page(
+    return Page(sess, 
         H1("Entities"),
         P(f"{len(ents)} entities. The funds/SPVs you administer — obligations, "
           "deadlines and filing status build on these in the next phases.", cls="muted"),
@@ -1030,7 +1046,7 @@ def entity_view(sess, entity_id: int):
         return r
     e = store.get_entity(entity_id)
     if not e:
-        return Page(H1("Entity not found"))
+        return Page(sess, H1("Entity not found"))
     from datetime import date
     today = date.today()
     obs = [monitor.annotate(o, e, today) for o in store.list_obligations(entity_id=entity_id)]
@@ -1071,7 +1087,7 @@ def entity_view(sess, entity_id: int):
                        " to generate them from this entity's jurisdictions and activities.",
                        cls="muted")),
         style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px")
-    return Page(
+    return Page(sess, 
         H1(e["name"]),
         Dl(Dt("Type"), Dd(e.get("type") or "—"),
            Dt("Domicile"), Dd(JUR_NAMES.get(e.get("domicile"), e.get("domicile") or "—")),
@@ -1146,7 +1162,7 @@ def obligations_all(sess, status: str = "", jur: str = ""):
                Td(ob_status_badge(o.get("status"))),
                Td("✓" if o.get("verified") else "—"))
             for o in obs]
-    return Page(
+    return Page(sess, 
         H1("Obligations"),
         P("Every filing obligation across the portfolio. Filter by status or "
           "jurisdiction; click an entity or open a form.", cls="muted"),
@@ -1218,7 +1234,7 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
                Td(ob_status_badge(r.get("status"))),
                Td(Span(r.get("deadline") or "—", style="color:var(--muted);font-size:11px")))
             for r in cal]
-    return Page(
+    return Page(sess, 
         H1("Deadline calendar"),
         P("Filing deadlines across the portfolio, with concrete dates resolved from "
           "each rule and the entity's financial year-end. ", Span("~", style="color:var(--amber);font-weight:700"),
@@ -1303,7 +1319,7 @@ window.addEventListener('resize',function(){if(window.Plotly){
   if(document.getElementById('pfcov'))Plotly.Plots.resize('pfcov');
   if(document.getElementById('catcov'))Plotly.Plots.resize('catcov');}});
 """)
-    return Page(
+    return Page(sess, 
         H1("Coverage map"),
         P("Two lenses on coverage: how much of the client book is filed, and how "
           "thick our form catalogue is across jurisdictions and categories.", cls="muted"),
@@ -1404,7 +1420,7 @@ function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCa
     r.style.display=ok?'':'none';if(ok)n++;});
   document.getElementById('doccount').textContent=n;}
 """)
-    return Page(H1("Documents"),
+    return Page(sess, H1("Documents"),
                 P(Span(str(len(with_pdf)), id="doccount"), f" of {len(forms)} documents shown · "
                   "search and filter below, or upload a new PDF (pushed to the server volume).",
                   cls="muted"),
@@ -1455,7 +1471,7 @@ def help_page(sess):
         *[Tr(Td(j), Td(how), Td(offers), Td(ft)) for j, how, offers, ft in AUDIT])
     shortcuts = Table(Tr(Th("Shortcut"), Th("Does")),
                       *[Tr(Td(Code(p)), Td(desc)) for p, desc, _ in SHORTCUTS])
-    return Page(
+    return Page(sess, 
         H1("Help & User Guide"),
         P("TaxHub helps a fund back office find the correct tax form to file, with "
           "provenance back to the underlying law. Use the AI Assistant for free-text "
@@ -1484,7 +1500,7 @@ def user_guide_pdf(sess):
     from pathlib import Path
     p = Path(__file__).resolve().parent.parent / "docs" / "taxhub_user_guide.pdf"
     if not p.exists():
-        return Page(H1("User guide PDF not generated yet"),
+        return Page(sess, H1("User guide PDF not generated yet"),
                     P("Run scripts/generate_user_guide.py.", cls="muted"))
     return Response(p.read_bytes(), media_type="application/pdf",
                     headers={"Content-Disposition": 'inline; filename="taxhub_user_guide.pdf"'})
@@ -1495,7 +1511,7 @@ def changes_page(sess, j: str = None):
     if (r := require(sess)):
         return r
     chs = store.recent_changes(60, jurisdiction_code=j)
-    return Page(H1("Recent changes"),
+    return Page(sess, H1("Recent changes"),
         *[Div(Div(Span(c.get("change_type", ""), cls=f"pill {c.get('change_type','')}"), " ",
                   f"{c['jurisdiction_code']} · {(c.get('detected_at') or '')[:10]}", cls="meta"),
               Div(A(c["title"], href=f"/document/{c.get('document_id')}"),
