@@ -97,7 +97,17 @@ dates. Two layers, Sphere-style:
 2. **Determine (obligation engine)** — deterministic matcher + AI activity-mapper +
    `verified` flag + obligations table on the entity page.
 3. **File-status** — status workflow + portfolio roll-up on the Dashboard.
-4. **Monitor** — `/calendar` + due-date computation + deadline/law-change digest.
+4. **Monitor** — `/calendar` + due-date computation + deadline/law-change digest. ✅ DONE
+   - `web/monitor.py`: deterministic due-date resolver (ordered regex over the real
+     deadline rules) → concrete date + `basis` + `indicative` flag; genuinely
+     undatable rules (filed-with-return, anniversary, notice-relative) resolve to
+     `None` with an explanation. No persistence — dates computed on the fly from
+     obligation rule + entity FY-end (re-running Determine re-dates for free).
+   - `/calendar` (urgency chips overdue/due-soon/upcoming/scheduled/undated/done +
+     jurisdiction filter); `/admin/digest` JSON (overdue + ≤90-day upcoming) as the
+     alert foundation; Dashboard "Deadlines" panel; per-entity "Due" column.
+   - *Remaining for a later pass:* scheduled email/Slack send + joining law-change
+     events to entity jurisdictions (the digest data is already assembled).
 5. **Coverage Map** — `/coverage` visual (jurisdiction + portfolio lenses).
 6. **entity_agent** for Copilot/Assistant + expert-verified badges across answers.
 

@@ -17,6 +17,7 @@ from fasthtml.common import *
 from starlette.responses import StreamingResponse
 
 import taxstore as store
+from web import monitor
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -342,6 +343,7 @@ def left_pane(sess):
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Entities", href="/entities", cls="navlink"),
             A("Obligations", href="/obligations", cls="navlink"),
+            A("📅 Calendar", href="/calendar", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
@@ -656,11 +658,30 @@ def dashboard(sess):
         ) if total else P("No obligations yet — open an entity and click "
                           "“Determine obligations”.", cls="muted")),
         style="margin:14px 0")
+    # Upcoming deadlines (resolved dates) — the Monitor roll-up.
+    from datetime import date
+    dig = monitor.deadline_digest(store, date.today(), horizon_days=90)
+    nxt = (dig["overdue"] + dig["upcoming"])[:6]
+    deadlines = Div(
+        H2("Deadlines"),
+        P(A(f"{dig['counts']['overdue']} overdue", href="/calendar?urg=overdue",
+            style="color:#c0392b;font-weight:600"), " · ",
+          A(f"{dig['counts']['upcoming']} due within 90 days", href="/calendar?urg=due_soon"),
+          " · ", A("open calendar →", href="/calendar"),
+          style="color:var(--muted);font-size:13px"),
+        (Table(Tr(Th("Due"), Th("Entity"), Th("Obligation"), Th("")),
+               *[Tr(Td(r.get("due") or "—"),
+                    Td(A(r.get("entity_name") or "—", href=f"/entity/{r['entity_id']}")),
+                    Td((r.get("title") or "form")[:48]),
+                    Td(urgency_badge(r["urgency"]))) for r in nxt])
+         if nxt else P("Nothing overdue or due in the next 90 days.", cls="muted")),
+        style="margin:14px 0") if total else ""
     return Page(H1("Dashboard"),
         Table(Tr(Th("Metric"), Th("Count")),
               *[Tr(Td(A(k, href="/entities") if k == "entities" else k), Td(str(v)))
                 for k, v in metrics.items()]),
         compliance,
+        deadlines,
         H2("Jurisdictions"),
         Table(Tr(Th("Code"), Th("Documents")),
               *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
@@ -1009,7 +1030,9 @@ def entity_view(sess, entity_id: int):
     e = store.get_entity(entity_id)
     if not e:
         return Page(H1("Entity not found"))
-    obs = store.list_obligations(entity_id=entity_id)
+    from datetime import date
+    today = date.today()
+    obs = [monitor.annotate(o, e, today) for o in store.list_obligations(entity_id=entity_id)]
     nver = sum(1 for o in obs if o.get("verified"))
     determine = Form(
         Button("⟳ Determine obligations", cls="btn"),
@@ -1033,6 +1056,7 @@ def entity_view(sess, entity_id: int):
         return Tr(Td(o.get("jurisdiction_code")),
                   Td(A(o.get("title") or "form", href=f"/form-pdf/{o['form_id']}", target="_blank")),
                   Td(CATEGORY_LABELS.get(o.get("category"), o.get("category") or "—")),
+                  _due_cell(o), Td(urgency_badge(o["urgency"])),
                   Td(o.get("deadline") or "—"), Td(status_sel), Td(ver_form))
 
     ob_section = Div(
@@ -1040,8 +1064,8 @@ def entity_view(sess, entity_id: int):
             (Span(f"  {len(obs)} obligations · {nver} verified",
                   style="color:var(--muted);font-size:12px;margin-left:10px") if obs else ""),
             style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"),
-        (Table(Tr(Th("Jur"), Th("Obligation"), Th("Category"), Th("Filing deadline"),
-                  Th("Status"), Th("Verified")), *[ob_row(o) for o in obs])
+        (Table(Tr(Th("Jur"), Th("Obligation"), Th("Category"), Th("Due"), Th(""),
+                  Th("Filing deadline"), Th("Status"), Th("Verified")), *[ob_row(o) for o in obs])
          if obs else P("No obligations yet — click ", B("Determine obligations"),
                        " to generate them from this entity's jurisdictions and activities.",
                        cls="muted")),
@@ -1130,6 +1154,90 @@ def obligations_all(sess, status: str = "", jur: str = ""):
                   Th("Filing deadline"), Th("Status"), Th("Verified")), *rows)
          if rows else P("No obligations match.", cls="muted")),
         title="Obligations · TaxHub")
+
+
+def urgency_badge(urg):
+    col = monitor.URGENCY_COLOR.get(urg, "#7a7a85")
+    return Span(monitor.URGENCY_LABEL.get(urg, urg),
+                style=f"display:inline-block;background:{col}22;color:{col};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
+
+
+def _due_cell(r):
+    if not r.get("due"):
+        return Td(Span("—", style="color:var(--muted)"),
+                  title=r.get("due_basis") or "")
+    days = r.get("days_out")
+    rel = "today" if days == 0 else (f"{-days}d overdue" if days < 0 else f"in {days}d")
+    mark = Span(" ~", title="Indicative — verify against the source rule",
+                style="color:var(--amber);font-weight:700") if r.get("indicative") else ""
+    return Td(r["due"], mark, Br(),
+              Span(rel, style="color:var(--muted);font-size:11px"),
+              title=r.get("due_basis") or "")
+
+
+@rt("/calendar")
+def calendar_view(sess, urg: str = "", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    from datetime import date
+    today = date.today()
+    cal = monitor.portfolio_calendar(store, today)
+    counts = {u: sum(1 for r in cal if r["urgency"] == u) for u in monitor.URGENCY_LABEL}
+    rows_all = cal
+    if urg:
+        cal = [r for r in cal if r["urgency"] == urg]
+    if jur:
+        cal = [r for r in cal if r.get("jurisdiction_code") == jur]
+    jurs = sorted({r.get("jurisdiction_code") for r in rows_all if r.get("jurisdiction_code")})
+
+    def chip(u):
+        active = (u == urg)
+        col = monitor.URGENCY_COLOR.get(u, "#7a7a85")
+        return A(f"{monitor.URGENCY_LABEL[u]} {counts.get(u, 0)}",
+                 href=f"/calendar?urg={'' if active else u}&jur={jur}",
+                 style=f"display:inline-block;padding:5px 12px;border-radius:20px;"
+                       f"font-size:12px;font-weight:600;text-decoration:none;margin-right:6px;"
+                       f"border:1px solid {col};color:{'#fff' if active else col};"
+                       f"background:{col if active else 'transparent'}")
+    chips = Div(*[chip(u) for u in ("overdue", "due_soon", "upcoming", "scheduled", "undated", "done")],
+                style="margin:12px 0")
+    jurbar = Div(
+        Select(Option("All jurisdictions", value="", selected=(not jur)),
+               *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+               onchange="location='/calendar?jur='+this.value+'&urg='+'" + urg + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        Span(f"  {len(cal)} obligations", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;align-items:center;margin:8px 0")
+    rows = [Tr(_due_cell(r),
+               Td(urgency_badge(r["urgency"])),
+               Td(A(r.get("entity_name") or "—", href=f"/entity/{r['entity_id']}")),
+               Td(r.get("jurisdiction_code")),
+               Td(A(r.get("title") or "form", href=f"/form-pdf/{r['form_id']}", target="_blank")),
+               Td(ob_status_badge(r.get("status"))),
+               Td(Span(r.get("deadline") or "—", style="color:var(--muted);font-size:11px")))
+            for r in cal]
+    return Page(
+        H1("Deadline calendar"),
+        P("Filing deadlines across the portfolio, with concrete dates resolved from "
+          "each rule and the entity's financial year-end. ", Span("~", style="color:var(--amber);font-weight:700"),
+          " marks an indicative date — verify against the source rule. Closed "
+          "obligations (filed/confirmed) are never flagged overdue.", cls="muted"),
+        chips, jurbar,
+        (Table(Tr(Th("Due"), Th("Urgency"), Th("Entity"), Th("Jur"), Th("Obligation"),
+                  Th("Status"), Th("Rule")), *rows)
+         if rows else P("No obligations match.", cls="muted")),
+        title="Calendar · TaxHub")
+
+
+@rt("/admin/digest")
+def admin_digest(sess, request, horizon: int = 90):
+    """Machine-readable deadline digest (overdue + upcoming) — the foundation for
+    email/Slack alerts. Gated by session or X-Admin-Token."""
+    if require(sess) and not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    from datetime import date
+    return JSONResponse(monitor.deadline_digest(store, date.today(), horizon_days=horizon))
 
 
 @rt("/entity/{entity_id}/delete", methods=["POST"])
