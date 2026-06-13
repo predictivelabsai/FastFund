@@ -169,6 +169,22 @@ class SqliteStore(Storage):
             updated_at    TEXT,
             UNIQUE(client_ref)
         )""",
+        # Obligations (Determine engine output): one per (entity, form).
+        """CREATE TABLE IF NOT EXISTS obligations (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id         INTEGER NOT NULL,
+            form_id           INTEGER NOT NULL,
+            title             TEXT,
+            jurisdiction_code TEXT,
+            category          TEXT,
+            deadline          TEXT,
+            period            TEXT,
+            status            TEXT,
+            verified          INTEGER,
+            created_at        TEXT,
+            updated_at        TEXT,
+            UNIQUE(entity_id, form_id)
+        )""",
         """CREATE TABLE IF NOT EXISTS chat_sessions (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
@@ -725,6 +741,64 @@ class SqliteStore(Storage):
     def count_entities(self) -> int:
         with self.conn() as c:
             return int(c.execute(text("SELECT count(*) FROM entities")).scalar() or 0)
+
+    # ── Obligations ────────────────────────────────────────────────────────
+    @staticmethod
+    def _ob_row(r) -> dict:
+        d = dict(r)
+        d["verified"] = bool(d.get("verified"))
+        return d
+
+    def upsert_obligation(self, ob: dict) -> int:
+        now = utcnow()
+        desc = {"title": ob.get("title"), "jurisdiction_code": ob.get("jurisdiction_code"),
+                "category": ob.get("category"), "deadline": ob.get("deadline"),
+                "period": ob.get("period")}
+        with self.conn() as c:
+            row = c.execute(text(
+                "SELECT id FROM obligations WHERE entity_id=:e AND form_id=:f"),
+                {"e": ob["entity_id"], "f": ob["form_id"]}).first()
+            if row:  # refresh descriptive fields only — keep status/verified
+                sets = ", ".join(f"{k}=:{k}" for k in desc)
+                c.execute(text(f"UPDATE obligations SET {sets}, updated_at=:now WHERE id=:id"),
+                          {**desc, "now": now, "id": row[0]})
+                return row[0]
+            res = c.execute(text(
+                "INSERT INTO obligations (entity_id,form_id,title,jurisdiction_code,"
+                "category,deadline,period,status,verified,created_at,updated_at) VALUES "
+                "(:e,:f,:title,:jurisdiction_code,:category,:deadline,:period,"
+                "'not_started',0,:now,:now)"),
+                {"e": ob["entity_id"], "f": ob["form_id"], **desc, "now": now})
+            return int(res.lastrowid)
+
+    def get_obligation(self, obligation_id: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT * FROM obligations WHERE id=:i"),
+                          {"i": obligation_id}).mappings().first()
+            return self._ob_row(r) if r else None
+
+    def list_obligations(self, entity_id=None, status=None, limit=1000) -> list[dict]:
+        where, params = [], {"l": limit}
+        if entity_id is not None:
+            where.append("entity_id=:e"); params["e"] = entity_id
+        if status:
+            where.append("status=:s"); params["s"] = status
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        with self.conn() as c:
+            rows = c.execute(text(
+                f"SELECT * FROM obligations {clause} "
+                "ORDER BY jurisdiction_code, category LIMIT :l"), params).mappings().all()
+        return [self._ob_row(r) for r in rows]
+
+    def set_obligation_status(self, obligation_id: int, status: str) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE obligations SET status=:s, updated_at=:n WHERE id=:i"),
+                      {"s": status, "n": utcnow(), "i": obligation_id})
+
+    def set_obligation_verified(self, obligation_id: int, verified: bool) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE obligations SET verified=:v, updated_at=:n WHERE id=:i"),
+                      {"v": 1 if verified else 0, "n": utcnow(), "i": obligation_id})
 
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:

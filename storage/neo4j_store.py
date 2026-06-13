@@ -623,6 +623,7 @@ class Neo4jStore(Storage):
                    uid=ex["uid"], props=props, now=now)
             return ex["uid"]
         uid = cls._next_id(tx, "Entity")
+        props.setdefault("status", "active")
         tx.run("CREATE (e:Entity {uid:$uid, created_at:$now, updated_at:$now}) "
                "SET e += $props", uid=uid, props=props, now=now)
         for jc in (props.get("jurisdictions") or []):
@@ -649,6 +650,67 @@ class Neo4jStore(Storage):
     def count_entities(self) -> int:
         with self._session() as s:
             return s.run("MATCH (e:Entity) RETURN count(e) AS n").single()["n"]
+
+    # ── Obligations ────────────────────────────────────────────────────────
+    _OB_DESC = ("title", "jurisdiction_code", "category", "deadline", "period")
+    _OB_RETURN = (
+        "o.uid AS id, o.entity_id AS entity_id, o.form_id AS form_id, "
+        "o.title AS title, o.jurisdiction_code AS jurisdiction_code, "
+        "o.category AS category, o.deadline AS deadline, o.period AS period, "
+        "o.status AS status, coalesce(o.verified,false) AS verified")
+
+    def upsert_obligation(self, ob: dict) -> int:
+        desc = {k: ob.get(k) for k in self._OB_DESC}
+        with self._session() as s:
+            return s.write_transaction(
+                self._upsert_obligation, ob["entity_id"], ob["form_id"], desc)
+
+    @classmethod
+    def _upsert_obligation(cls, tx, eid, fid, desc) -> int:
+        now = utcnow()
+        ex = tx.run("MATCH (o:Obligation {entity_id:$e, form_id:$f}) "
+                    "RETURN o.uid AS uid", e=eid, f=fid).single()
+        if ex:  # refresh descriptive fields only — keep status/verified
+            tx.run("MATCH (o:Obligation {uid:$uid}) SET o += $desc, o.updated_at=$now",
+                   uid=ex["uid"], desc=desc, now=now)
+            return ex["uid"]
+        uid = cls._next_id(tx, "Obligation")
+        tx.run("MATCH (e:Entity {uid:$e}) "
+               "CREATE (o:Obligation {uid:$uid, entity_id:$e, form_id:$f, "
+               "status:'not_started', verified:false, created_at:$now, updated_at:$now}) "
+               "SET o += $desc CREATE (e)-[:HAS_OBLIGATION]->(o) "
+               "WITH o MATCH (fm:Form {uid:$f}) MERGE (o)-[:FOR_FORM]->(fm)",
+               e=eid, f=fid, uid=uid, desc=desc, now=now)
+        return uid
+
+    def get_obligation(self, obligation_id: int) -> dict | None:
+        with self._session() as s:
+            r = s.run(f"MATCH (o:Obligation {{uid:$i}}) RETURN {self._OB_RETURN}",
+                      i=obligation_id).single()
+            return dict(r) if r else None
+
+    def list_obligations(self, entity_id=None, status=None, limit=1000) -> list[dict]:
+        where = []
+        if entity_id is not None:
+            where.append("o.entity_id=$eid")
+        if status:
+            where.append("o.status=$status")
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                f"MATCH (o:Obligation) {clause} RETURN {self._OB_RETURN} "
+                "ORDER BY o.jurisdiction_code, o.category LIMIT $lim",
+                eid=entity_id, status=status, lim=limit)]
+
+    def set_obligation_status(self, obligation_id: int, status: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (o:Obligation {uid:$i}) SET o.status=$s, o.updated_at=$now",
+                  i=obligation_id, s=status, now=utcnow())
+
+    def set_obligation_verified(self, obligation_id: int, verified: bool) -> None:
+        with self._session() as s:
+            s.run("MATCH (o:Obligation {uid:$i}) SET o.verified=$v, o.updated_at=$now",
+                  i=obligation_id, v=bool(verified), now=utcnow())
 
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:

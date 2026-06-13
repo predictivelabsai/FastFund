@@ -277,6 +277,34 @@ class Storage(abc.ABC):
     def count_entities(self) -> int:
         ...
 
+    # ── Obligations (what an entity must file — the Determine engine output) ─
+    # One obligation per (entity, form). Re-running Determine upserts by that
+    # natural key and must PRESERVE status/verified on existing rows.
+
+    @abc.abstractmethod
+    def upsert_obligation(self, ob: dict) -> int:
+        """Insert/update an obligation by (entity_id, form_id). On create sets
+        status='not_started', verified=False. On update, refreshes descriptive
+        fields (title, category, jurisdiction_code, deadline, period) but never
+        clobbers status/verified. Returns the obligation id."""
+
+    @abc.abstractmethod
+    def get_obligation(self, obligation_id: int) -> dict | None:
+        ...
+
+    @abc.abstractmethod
+    def list_obligations(self, entity_id: int | None = None, status: str | None = None,
+                         limit: int = 1000) -> list[dict]:
+        ...
+
+    @abc.abstractmethod
+    def set_obligation_status(self, obligation_id: int, status: str) -> None:
+        ...
+
+    @abc.abstractmethod
+    def set_obligation_verified(self, obligation_id: int, verified: bool) -> None:
+        ...
+
     # ── Chat history (assistant sessions) ──────────────────────────────────
     @abc.abstractmethod
     def create_chat_session(self, user_email: str, title: str = "") -> int:
