@@ -499,16 +499,38 @@ def documents(sess, uploaded: str = ""):
             style="display:flex;gap:6px;align-items:center"),
         Button("Upload PDF", cls="btn", style="margin-top:10px"),
         method="post", action="/upload", enctype="multipart/form-data")
-    browser = Table(
-        Tr(Th("Jurisdiction"), Th("Category"), Th("Document"), Th("PDF")),
-        *[Tr(Td(f["jurisdiction_code"]), Td(f.get("category") or ""),
-             Td(A(f["title"], href=f"/form/{f['id']}")),
-             Td("📄" if f.get("file_path") else "link"))
-          for f in with_pdf[:300]])
+    filterbar = Div(
+        Input(id="docsearch", placeholder="Search documents…", oninput="filterDocs()",
+              style="flex:1;padding:8px;border:1px solid #e3e6eb;border-radius:7px"),
+        Select(Option("All jurisdictions", value=""),
+               *[Option(JUR_NAMES.get(j, j), value=j) for j in jurs],
+               id="docjur", onchange="filterDocs()", style="padding:8px"),
+        Select(Option("All categories", value=""),
+               *[Option(CATEGORY_LABELS.get(c, c), value=c) for c in cats],
+               id="doccat", onchange="filterDocs()", style="padding:8px"),
+        style="display:flex;gap:8px;margin:12px 0")
+    rows = [Tr(Td(f["jurisdiction_code"]), Td(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "")),
+               Td(A(f["title"], href=f"/form/{f['id']}")),
+               Td("📄" if f.get("file_path") else "link"),
+               cls="docrow", **{"data-j": f["jurisdiction_code"], "data-c": f.get("category") or "",
+                                "data-t": (f["title"] or "").lower()})
+            for f in with_pdf]
+    browser = Table(Tr(Th("Jurisdiction"), Th("Category"), Th("Document"), Th("PDF")),
+                    *rows, id="doctable")
+    js = Script("""
+function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCase();
+  var j=document.getElementById('docjur').value,c=document.getElementById('doccat').value,n=0;
+  document.querySelectorAll('#doctable tr.docrow').forEach(function(r){
+    var ok=(!q||r.dataset.t.indexOf(q)>=0)&&(!j||r.dataset.j===j)&&(!c||r.dataset.c===c);
+    r.style.display=ok?'':'none';if(ok)n++;});
+  document.getElementById('doccount').textContent=n;}
+""")
     return Page(H1("Documents"),
-                P(f"{len(with_pdf)} documents with stored PDFs · {len(forms)} total. "
-                  "Upload pushes a PDF to the server volume and registers it.", cls="muted"),
-                upload, H2("Stored documents"), browser, title="Documents · TaxHub")
+                P(Span(str(len(with_pdf)), id="doccount"), f" of {len(forms)} documents shown · "
+                  "search and filter below, or upload a new PDF (pushed to the server volume).",
+                  cls="muted"),
+                upload, H2("Stored documents"), filterbar, browser, js,
+                title="Documents · TaxHub")
 
 
 @rt("/upload", methods=["POST"])
