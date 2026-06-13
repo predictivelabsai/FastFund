@@ -10,9 +10,10 @@ change**, traces guidance back to the **primary law** it interprets, and answers
 questions over the resulting citation/change graph.
 
 This document describes the implemented system: components, data model, data
-flow, the LangGraph agent orchestrator + graph-RAG retrieval, configuration, and
-deployment (local → Coolify → AuraDB). For a quick start see the top-level
-[`README.md`](../README.md).
+flow, the agent orchestrator + graph-RAG retrieval, configuration, and the
+**target production deployment on Microsoft Azure** — Azure AI Foundry (LLMs +
+Agents), Azure Blob Storage (document/PDF store), and a managed **Neo4j AuraDB**
+graph. For a quick start see the top-level [`README.md`](../README.md).
 
 ---
 
@@ -90,75 +91,57 @@ in-app PDF viewer.
 
 ---
 
-## 2. Component architecture
+## 2. Architecture — Azure target deployment
+
+The production target runs the containerised app on **Azure**, with the LLM/agent
+layer on **Azure AI Foundry**, documents in **Azure Blob Storage**, and the
+graph on a **managed Neo4j AuraDB** instance.
 
 ```mermaid
 flowchart TB
-    subgraph Sources["Official sources"]
-        SRC[("Tax authorities across 26<br/>JTC Group jurisdictions<br/>(forms indexes, legislation,<br/>guidance portals)")]
-    end
-
-    subgraph Ingest["Ingestion (ingest/)"]
-        FCFG["config/tax_forms.yaml<br/>(26-jurisdiction form catalogue)"]
-        SCFG["config/tax_sources.yaml<br/>(document catalogue)"]
-        FORMS["ingest/forms.py<br/>form scrape + Forms Tree"]
-        FETCH["ingest/fetch.py + scrapers/<br/>fetch + extract + hash"]
-        ORCH["ingest/cli.py<br/>scraper CLI"]
-        AI["rag/llm.py<br/>Grok summary + citations"]
-    end
-
-    subgraph StorageLayer["Storage (backend-neutral)"]
-        BASE["storage/base.py<br/>Storage ABC"]
-        SHIM["taxstore.py<br/>compat shim → get_store()"]
-        NEO["storage/neo4j_store.py"]
-        SQL["storage/sqlite_store.py"]
-    end
-
-    subgraph Backends["Databases"]
-        NEO4J[("Neo4j / AuraDB")]
-        SQLITE[("SQLite / Postgres")]
-    end
-
-    subgraph Serve["Serving (web/ + agents/ + rag/)"]
-        APP["web/app.py<br/>FastHTML 3-pane app"]
-        AGENTS["agents/orchestrator.py<br/>LangGraph agent + 4 tools"]
-        RAG["rag/retrieval.py<br/>fulltext/vector/hybrid + answer()"]
-        EMB["rag/embeddings.py<br/>fastembed chunks"]
-    end
-
     USER(["Back-office user"])
-    GROK[["xAI Grok API"]]
+    SRC[("Official tax-authority sources<br/>26 JTC Group jurisdictions<br/>(forms, legislation, guidance)")]
 
-    SRC --> FETCH
-    FCFG --> FORMS
-    SCFG --> ORCH
-    ORCH --> FETCH
-    FORMS --> FETCH
-    FETCH --> ORCH
-    ORCH --> AI
-    AI -.-> GROK
-    ORCH --> SHIM
-    FORMS --> SHIM
-    EMB --> SHIM
-    SHIM --> BASE
-    BASE --> NEO
-    BASE --> SQL
-    NEO --> NEO4J
-    SQL --> SQLITE
-    USER --> APP
-    APP --> AGENTS
-    AGENTS --> RAG
-    AGENTS -.-> GROK
-    RAG --> EMB
-    RAG --> SHIM
-    RAG -.-> GROK
-    APP --> SHIM
+    subgraph Azure["Microsoft Azure"]
+        subgraph ACA["Azure Container Apps"]
+            APP["TaxHub container<br/>FastHTML 3-pane app<br/>web/ · agents/ · rag/ · ingest/"]
+        end
+        subgraph FOUNDRY["Azure AI Foundry"]
+            MODELS[["Foundry models<br/>chat + reasoning (OpenAI-compatible)"]]
+            FAGENTS[["Foundry Agents<br/>orchestrator + specialist tools"]]
+        end
+        BLOB[("Azure Blob Storage<br/>form PDFs + raw documents")]
+        KV["Azure Key Vault<br/>secrets / connection strings"]
+    end
+
+    AURA[("Neo4j AuraDB<br/>managed graph database<br/>neo4j+s://…")]
+
+    USER -->|HTTPS| APP
+    APP -->|route + stream| FAGENTS
+    FAGENTS --> MODELS
+    APP -->|graph read/write · Bolt+TLS| AURA
+    APP -->|store / serve PDFs| BLOB
+    APP -->|scheduled scrape| SRC
+    SRC -->|PDFs + HTML| APP
+    APP -.->|reads secrets| KV
 ```
 
-`DATA_STORAGE` selects exactly one backend at runtime; both implement the same
-`Storage` interface, so no caller (app, agents, retrieval, CLI) knows which
-database is live. The top-level `taxstore.py` is a thin compat shim that
-re-exports the active store from `storage.get_store()`.
+The application is backend- and provider-neutral, which is what makes this target
+clean to hit:
+
+- **LLM/agents** — the orchestrator (`agents/`) and RAG layer (`rag/llm.py`) talk
+  to an **OpenAI-compatible** endpoint, so the same code points at Azure AI
+  Foundry model deployments (and Foundry Agents) in production by setting the
+  Azure endpoint + key; no code change versus the local LLM.
+- **Documents** — form PDFs and raw captures live in **Azure Blob Storage** in
+  production (`DOC_STORAGE=blob`); the local filesystem volume is the dev fallback.
+- **Graph** — `DATA_STORAGE=neo4j` points at **managed Neo4j AuraDB** over
+  Bolt+TLS; the same `Storage` interface backs both backends, so no caller (app,
+  agents, retrieval, CLI) knows which database is live.
+
+`taxstore.py` is a thin compat shim re-exporting the active store from
+`storage.get_store()`. For the internal module/data-flow view (ingestion → storage
+→ serving), see §3 and §4.
 
 ---
 
@@ -301,10 +284,22 @@ Copy `.env.example` → `.env` (gitignored). All variables:
 | `NEO4J_USER` | neo4j mode | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | neo4j mode | — | Neo4j password |
 | `NEO4J_DATABASE` | no | `neo4j` | Target database name |
-| `XAI_API_KEY` | no | — | xAI Grok key; absent → AI features degrade gracefully |
-| `XAI_BASE_URL` | no | `https://api.x.ai/v1` | OpenAI-compatible base URL |
-| `GROK_MODEL` | no | `grok-4-1-fast-reasoning` | Model id |
-| `LLM_PROVIDER` | no | `xai` | Provider selector |
+| `LLM_PROVIDER` | no | `xai` | Provider selector: `xai` (dev) or `azure` (production / Azure AI Foundry) |
+| `LLM_API_KEY` / `XAI_API_KEY` | no | — | LLM key; absent → AI features degrade gracefully |
+| `LLM_BASE_URL` / `XAI_BASE_URL` | no | `https://api.x.ai/v1` | OpenAI-compatible base URL |
+| `GROK_MODEL` | no | `grok-4-1-fast-reasoning` | Model / deployment id |
+
+**Azure target (production)** — set these for the Azure AI Foundry + Blob deployment:
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `AZURE_AI_FOUNDRY_ENDPOINT` | Azure | Foundry project / model endpoint (OpenAI-compatible) |
+| `AZURE_AI_FOUNDRY_API_KEY` | Azure | Foundry key (or use Managed Identity) |
+| `FOUNDRY_MODEL` | Azure | Deployed model name (chat) |
+| `FOUNDRY_AGENT_ID` | optional | Foundry Agent id, if routing via Foundry Agents |
+| `DOC_STORAGE` | Azure | `blob` in production (`local` for dev) |
+| `AZURE_STORAGE_CONNECTION_STRING` | Azure | Blob Storage connection string (or Managed Identity) |
+| `BLOB_CONTAINER` | Azure | Container for form PDFs + raw docs (e.g. `taxhub-docs`) |
 | `RAG_RETRIEVER` | no | `hybrid` | Retriever: `hybrid`, `vector`, or `fulltext` |
 | `EMBEDDINGS` | no | `fastembed` | Embedding provider: `fastembed` or `openai` |
 | `EMBED_MODEL` | no | `BAAI/bge-small-en-v1.5` | Embedding model id |
@@ -317,84 +312,89 @@ Copy `.env.example` → `.env` (gitignored). All variables:
 
 ---
 
-## 7. Deployment
+## 7. Deployment — Microsoft Azure
 
-### 7.1 Local dev (user-owned Neo4j, no sudo)
+The production target is Azure end-to-end. The architecture diagram in §2 shows
+the runtime; this section is the how-to.
 
-```bash
-scripts/neo4j_local.sh setup     # one-time: build config + set initial password
-scripts/neo4j_local.sh start     # bolt://localhost:7687, http://localhost:7474
-python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
-python3.12 -m uvicorn web.app:app --port 5011
-```
+### 7.1 Azure service mapping
 
-Run on SQLite instead with `DATA_STORAGE=sqlite` (no Neo4j needed).
+| Concern | Azure service | Notes |
+|---------|---------------|-------|
+| App runtime | **Azure Container Apps** | Runs the existing `Dockerfile`; scales to zero; built-in HTTPS ingress + `/health` probe. (Azure App Service for Containers is an equally valid host.) |
+| LLM + agents | **Azure AI Foundry** | Model deployment (chat/reasoning) consumed over the OpenAI-compatible endpoint; optionally Foundry **Agents** for orchestration. |
+| Document store | **Azure Blob Storage** | Form PDFs + raw captures (`DOC_STORAGE=blob`). |
+| Graph database | **Neo4j AuraDB** (managed) | Reached over `neo4j+s://` (Bolt+TLS). Azure Marketplace offers managed Aura, or use Neo4j Aura directly. |
+| Secrets | **Azure Key Vault** | Foundry key, AuraDB password, `APP_SECRET`, Blob connection string — referenced as Container App secrets. |
+| Registry | **Azure Container Registry** | Stores the built image pulled by Container Apps. |
+| Scheduled scrape | **Container Apps Job** (cron) | Runs `ingest/cli.py --all` on a schedule to accrue change history. |
 
-### 7.2 Coolify / Docker Compose
-
-The `web` service is Coolify-labelled (`coolify.managed`, `coolify.port=5011`)
-with a `/health` healthcheck. The `scrape` service (profile `tools`) shares the
-data volume for on-demand/scheduled runs.
-
-```bash
-docker compose up -d web
-docker compose run --rm scrape --all      # populate / refresh the corpus
-```
-
-Point `NEO4J_URI` at AuraDB (recommended) **or** bring up the bundled Neo4j:
+### 7.2 Provision & deploy
 
 ```bash
-docker compose --profile neo4j up -d      # self-hosted neo4j:5.26-community
+# 0. Variables
+RG=taxhub-rg; LOC=westeurope; ACR=taxhubacr; APP=taxhub
+
+# 1. Resource group + container registry, then build & push the image
+az group create -n $RG -l $LOC
+az acr create -n $ACR -g $RG --sku Basic --admin-enabled true
+az acr build -r $ACR -t taxhub:latest .            # builds the repo Dockerfile
+
+# 2. Blob Storage for documents
+az storage account create -n taxhubdocs -g $RG -l $LOC --sku Standard_LRS
+az storage container create --account-name taxhubdocs -n taxhub-docs
+
+# 3. Azure AI Foundry: create a project + deploy a chat model in the
+#    Foundry portal (ai.azure.com); copy the endpoint + key (and Agent id if used).
+
+# 4. Container Apps environment + app
+az containerapp env create -n taxhub-env -g $RG -l $LOC
+az containerapp create -n $APP -g $RG --environment taxhub-env \
+  --image $ACR.azurecr.io/taxhub:latest --target-port 5011 --ingress external \
+  --secrets aura-pass=<AURADB_PASSWORD> foundry-key=<FOUNDRY_KEY> \
+            blob-cs=<BLOB_CONNECTION_STRING> app-secret=<RANDOM> \
+  --env-vars DATA_STORAGE=neo4j LLM_PROVIDER=azure DOC_STORAGE=blob \
+             NEO4J_URI=neo4j+s://<id>.databases.neo4j.io \
+             NEO4J_USER=<id> NEO4J_DATABASE=<id> \
+             NEO4J_PASSWORD=secretref:aura-pass \
+             AZURE_AI_FOUNDRY_ENDPOINT=<endpoint> FOUNDRY_MODEL=<deployment> \
+             AZURE_AI_FOUNDRY_API_KEY=secretref:foundry-key \
+             AZURE_STORAGE_CONNECTION_STRING=secretref:blob-cs \
+             BLOB_CONTAINER=taxhub-docs APP_SECRET=secretref:app-secret \
+             ADMIN_EMAIL=<email> ADMIN_PASSWORD=secretref:app-secret
 ```
 
-### 7.3 AuraDB (recommended production graph)
+### 7.3 Managed Neo4j AuraDB
 
-```mermaid
-flowchart LR
-    subgraph Coolify["Coolify host"]
-        WEB["web (FastHTML :5011)"]
-        SCRAPE["scrape (cron/on-demand)"]
-    end
-    AURA[("Neo4j AuraDB<br/>neo4j+s://…")]
-    XAI[["xAI Grok API"]]
-
-    WEB -- "Bolt+TLS" --> AURA
-    SCRAPE -- "Bolt+TLS" --> AURA
-    WEB -. HTTPS .-> XAI
-    SCRAPE -. HTTPS .-> XAI
-```
-
-Steps:
-
-1. Create a free/Pro AuraDB instance at <https://console.neo4j.io>; download the
-   generated credentials.
-2. Set in the Coolify environment:
+1. Create an AuraDB instance (Azure Marketplace "Neo4j Aura" or
+   <https://console.neo4j.io>); **download the credentials file — shown once**.
+2. Wire the four `NEO4J_*` values into the Container App (step 4 above):
    ```
-   DATA_STORAGE=neo4j
    NEO4J_URI=neo4j+s://<id>.databases.neo4j.io
-   NEO4J_USER=<id>          # see note below
+   NEO4J_USER=<id>          # see gotcha
    NEO4J_PASSWORD=<generated>
-   NEO4J_DATABASE=<id>      # see note below
+   NEO4J_DATABASE=<id>      # see gotcha
    ```
-   (`neo4j+s://` enables Bolt over TLS — required by Aura.) **Gotcha:** on
-   AuraDB *Free*, the username and the database name are **the instance id**
-   (e.g. `05a16101`), **not** `neo4j` — connecting to database `neo4j` fails
-   with `DatabaseNotFound`. Use the exact values from the credentials file Aura
-   downloads at creation time (it's shown only once). On Professional the
-   username/database are typically `neo4j`; either way, trust the downloaded
-   credentials file.
-3. Initialise the schema (idempotent, version-tolerant 4.x/5.x DDL):
+   `neo4j+s://` is Bolt over TLS (required by Aura). **Gotcha:** on AuraDB
+   *Free*, the username **and** database name are the **instance id** (e.g.
+   `05a16101`), not `neo4j` — connecting to database `neo4j` fails with
+   `DatabaseNotFound`. On Professional they are typically `neo4j`. Trust the
+   downloaded credentials file either way.
+3. Initialise the schema (idempotent, version-tolerant 4.x/5.x DDL) — it runs on
+   first app start (`init_db`), or on demand:
    ```bash
-   docker compose run --rm scrape --stats   # or: python3.12 taxstore.py
+   az containerapp exec -n $APP -g $RG --command "python3.12 taxstore.py"
    ```
 4. Backfill from an existing SQLite corpus, if any:
    ```bash
    DB_URL=sqlite:///taxhub.db python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe
    ```
-5. Schedule the scraper (e.g. Coolify cron) to build change history over time.
+5. Schedule the scraper as a Container Apps **Job** (cron) running
+   `ingest/cli.py --all` so change history accrues over time.
 
-No application code changes between local Neo4j 4.x and AuraDB 5.x — only the
-four `NEO4J_*` variables.
+No application code changes are needed to hit this target — only environment
+variables: `LLM_PROVIDER=azure` (Foundry), `DOC_STORAGE=blob` (Blob Storage), and
+`DATA_STORAGE=neo4j` with the four `NEO4J_*` values (AuraDB).
 
 ---
 
@@ -416,8 +416,8 @@ python3.12 -m pytest tests/ -q
 
 Ordered by leverage:
 
-1. **Deploy to AuraDB + Coolify** (§7.3) and point `taxhub.predictivelabs.ai` at
-   it. First real production target.
+1. **Deploy to Azure** (§7) — Container Apps + Azure AI Foundry + Blob Storage +
+   managed AuraDB. First real production target.
 2. **Schedule the scraper** (daily/weekly cron) so change history accrues — the
    product's core value is the *change* trail, which only exists once scrapes run
    repeatedly.

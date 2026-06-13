@@ -367,6 +367,7 @@ def left_pane(sess):
             cls="section"),
         Div(Div("Help", cls="lbl"),
             A("📘 User Guide", href="/help", cls="navlink"),
+            A("🛠 Technical Guide", href="/technical-guide", cls="navlink"),
             A("🌳 Document Hierarchy", href="/document-hierarchy", cls="navlink"),
             A("🕸 Ontology", href="/ontology", cls="navlink"),
             A("Sign out", href="/logout", cls="navlink"),
@@ -1476,7 +1477,8 @@ def help_page(sess):
         P("TaxHub helps a fund back office find the correct tax form to file, with "
           "provenance back to the underlying law. Use the AI Assistant for free-text "
           "questions, the Forms Tree to browse, or the shortcuts below.", cls="muted"),
-        P(A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn")),
+        P(A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn"), " ",
+          A("🛠 Technical Guide (architecture & Azure deployment)", href="/technical-guide", cls="btn")),
         H2("Filing types"),
         P("Every form is labelled by how it is filed:"),
         legend,
@@ -1504,6 +1506,51 @@ def user_guide_pdf(sess):
                     P("Run scripts/generate_user_guide.py.", cls="muted"))
     return Response(p.read_bytes(), media_type="application/pdf",
                     headers={"Content-Disposition": 'inline; filename="taxhub_user_guide.pdf"'})
+
+
+def _technical_guide_html():
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "docs" / "architecture_readme.html"
+    return p.read_text() if p.exists() else None
+
+
+@rt("/technical-guide")
+def technical_guide(sess):
+    """Architecture & Azure-deployment guide — the generated self-contained HTML
+    (with the rendered architecture diagram) shown inside the 3-pane shell."""
+    if (r := require(sess)):
+        return r
+    html = _technical_guide_html()
+    if not html:
+        return Page(sess, H1("Technical Guide not generated yet"),
+                    P("Run ", Code("python3.12 scripts/generate_architecture_html.py"),
+                      " to build docs/architecture_readme.html.", cls="muted"),
+                    title="Technical Guide · TaxHub")
+    body = html.split("<body>", 1)[1].rsplit("</body>", 1)[0] if "<body>" in html else html
+    return Page(sess,
+        Div(A("⬇ Open standalone HTML", href="/technical-guide.html", target="_blank", cls="btn"),
+            style="margin-bottom:14px"),
+        # Scope the doc's figure/diagram styling so it doesn't fight the app CSS.
+        Style(".techguide figure{margin:18px 0;text-align:center}"
+              ".techguide figure img{max-width:100%;border:1px solid var(--line);"
+              "border-radius:8px;padding:10px;background:#fff}"
+              ".techguide figcaption{color:var(--muted);font-size:12.5px;margin-top:6px}"
+              ".techguide pre{background:#f5f6f4;border:1px solid var(--line);border-radius:6px;"
+              "padding:12px 14px;font-size:12.5px;overflow-x:auto}"
+              ".techguide .toc{background:#f5f6f4;border:1px solid var(--line);border-radius:8px;padding:8px 16px}"
+              ".techguide .toc ul{list-style:none;padding-left:14px}"),
+        Div(NotStr(body), cls="techguide"),
+        title="Technical Guide · TaxHub")
+
+
+@rt("/technical-guide.html")
+def technical_guide_raw(sess):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    html = _technical_guide_html()
+    if not html:
+        return Response("Not generated", status_code=404)
+    return Response(html, media_type="text/html")
 
 
 @rt("/changes")
