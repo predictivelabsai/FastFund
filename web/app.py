@@ -577,6 +577,9 @@ def api_feed(sess, j: str = ""):
 
 
 # ── Copilot: persistent right-hand chat pane (same agents as the Assistant) ───
+# Context-sensitive starter cards: each Navigate page primes the Copilot with
+# questions that make sense for what the user is looking at. Keyed by the `ctx`
+# Page() passes; falls back to the generic set.
 COPILOT_SUGGESTIONS = [
     "What does Aurora Global Fund owe this year?",
     "Which entities have economic-substance filings due before 30 September?",
@@ -584,18 +587,84 @@ COPILOT_SUGGESTIONS = [
     "form: Cayman economic substance notification",
 ]
 
+COPILOT_CTX = {
+    "dashboard": [
+        "What's our overall compliance rate?",
+        "Show me every overdue obligation",
+        "What's due in the next 30 days?",
+        "How many obligations are awaiting expert sign-off?",
+    ],
+    "entities": [
+        "What does Aurora Global Fund owe this year?",
+        "Which entities are domiciled in the Cayman Islands?",
+        "List entities with a December year-end",
+        "Which entity has the most open obligations?",
+    ],
+    "obligations": [
+        "Show me every overdue obligation",
+        "Which obligations are awaiting expert sign-off?",
+        "List all economic-substance obligations",
+        "What's due in the next 30 days?",
+    ],
+    "calendar": [
+        "Which entities have economic-substance filings due before 30 September?",
+        "What's due in the next 30 days?",
+        "Show me every overdue obligation",
+        "What deadlines fall in this quarter?",
+    ],
+    "coverage": [
+        "Which jurisdiction has the lowest filing coverage?",
+        "What share of obligations are filed or confirmed?",
+        "Which obligation types are least covered?",
+        "Show me every unfiled obligation",
+    ],
+    "jurisdictions": [
+        "What obligations apply in the Cayman Islands?",
+        "Which jurisdictions require economic-substance filings?",
+        "Compare filing requirements across jurisdictions",
+        "form: Cayman economic substance notification",
+    ],
+    "documents": [
+        "Summarise the latest tax circular",
+        "Which documents mention economic substance?",
+        "Find the source for the Cayman ES deadline",
+        "What's the filing deadline for a CRS report?",
+    ],
+    "changes": [
+        "What changed in the last 30 days?",
+        "Which law updates affect my entities?",
+        "Summarise recent regulatory changes",
+        "Were any filing deadlines revised recently?",
+    ],
+}
 
-def copilot():
+
+def copilot_suggestions(ctx):
+    """Resolve a Page ctx to the Copilot's starter cards. ctx may be a context
+    key (str) or an ("entity", name) tuple for the single-entity page."""
+    if isinstance(ctx, tuple) and ctx and ctx[0] == "entity":
+        name = ctx[1]
+        return [
+            f"What does {name} owe this year?",
+            f"What's overdue for {name}?",
+            f"Which of {name}'s obligations are awaiting sign-off?",
+            f"What's {name}'s next filing deadline?",
+        ]
+    return COPILOT_CTX.get(ctx, COPILOT_SUGGESTIONS)
+
+
+def copilot(ctx="default"):
     """Right-hand chat pane for the Navigate pages — query the database with the
     same orchestrator/agents while the page stays visible alongside it (the third
-    pane of the 3-pane layout, in place of the changes feed)."""
+    pane of the 3-pane layout, in place of the changes feed). `ctx` selects the
+    page-appropriate starter cards."""
     return Div(
         Div(Span("🤖 Copilot"),
             Span("chat with your data", style="font-weight:400;color:var(--muted);font-size:12px"),
             cls="rhead"),
         Div(Div("Ask about your entities, obligations, deadlines, forms or recent "
                 "changes — I use the same agents as the Assistant.", cls="bubble assistant"),
-            *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in COPILOT_SUGGESTIONS],
+            *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in copilot_suggestions(ctx)],
             id="cpMsgs", cls="msgs"),
         Form(Textarea(name="msg", placeholder="Ask the database…", id="cpInp"),
              Button("Send", type="submit"),
@@ -636,9 +705,9 @@ async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
 # ── Secondary pages: same 3-pane shell as the Assistant ──────────────────────
 # left = nav, center = the page content, right = the Copilot (in place of the
 # changes feed). Pass sess so the left pane can show recent chats + sign-out.
-def Page(sess, *content, title="TaxHub", with_copilot=True):
+def Page(sess, *content, title="TaxHub", with_copilot=True, ctx="default"):
     center = Div(Div(*content, cls="wrap"), cls="pane center centerdoc")
-    right = copilot() if with_copilot else Div(cls="pane right")
+    right = copilot(ctx) if with_copilot else Div(cls="pane right")
     return (Title(title), CSS,
             Div(left_pane(sess), center, right, cls="app"),
             MARKED, JS, COPILOT_JS)
@@ -704,7 +773,7 @@ def dashboard(sess):
         Table(Tr(Th("Code"), Th("Documents")),
               *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
                 for j in jurs]),
-        title="Dashboard · TaxHub")
+        title="Dashboard · TaxHub", ctx="dashboard")
 
 
 @rt("/jurisdictions")
@@ -715,7 +784,8 @@ def jurisdictions(sess):
     return Page(sess, H1("Jurisdictions"),
         Table(Tr(Th("Code"), Th("Name"), Th("Documents")),
               *[Tr(Td(j["code"]), Td(A(JUR_NAMES.get(j["code"], j["code"]),
-                href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"]))) for j in jurs]))
+                href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"]))) for j in jurs]),
+        ctx="jurisdictions")
 
 
 @rt("/jurisdiction/{code}")
@@ -727,7 +797,7 @@ def jurisdiction(sess, code: str):
         Table(Tr(Th("Document"), Th("Type"), Th("Versions"), Th("Status")),
               *[Tr(Td(A(d["title"], href=f"/document/{d['id']}")), Td(d.get("doc_type", "")),
                    Td(str(d.get("versions", 0))), Td(d.get("status", ""))) for d in docs]),
-        title=f"{code} · TaxHub")
+        title=f"{code} · TaxHub", ctx="jurisdictions")
 
 
 @rt("/document/{doc_id}")
@@ -754,7 +824,7 @@ def document(sess, doc_id: int, embed: int = 0):
             or [Li("None", cls="muted")]))
     if embed:
         return (CSS, Div(body, cls="wrap"))
-    return Page(sess, body, title=f"{d['title'][:40]} · TaxHub")
+    return Page(sess, body, title=f"{d['title'][:40]} · TaxHub", ctx="documents")
 
 
 # ── Document Hierarchy (Plotly tree: Jurisdiction ▸ Category ▸ Form type ▸ Form) ──
@@ -998,7 +1068,7 @@ def entities(sess, added: str = ""):
         (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Jurisdictions"),
                   Th("FY end"), Th("Obligations"), Th("Client ref")), *rows) if rows
          else P("No entities yet — add one above or import a CSV.", cls="muted")),
-        title="Entities · TaxHub")
+        title="Entities · TaxHub", ctx="entities")
 
 
 @rt("/entity", methods=["POST"])
@@ -1101,7 +1171,7 @@ def entity_view(sess, entity_id: int):
         Form(Button("Delete entity", cls="btn",
                     style="background:#b0353a", onclick="return confirm('Delete this entity?')"),
              method="post", action=f"/entity/{entity_id}/delete", style="margin-top:18px"),
-        title=f"{e['name']} · TaxHub")
+        title=f"{e['name']} · TaxHub", ctx=("entity", e["name"]))
 
 
 @rt("/entity/{entity_id}/determine", methods=["POST"])
@@ -1171,7 +1241,7 @@ def obligations_all(sess, status: str = "", jur: str = ""):
         (Table(Tr(Th("Entity"), Th("Jur"), Th("Obligation"), Th("Category"),
                   Th("Filing deadline"), Th("Status"), Th("Verified")), *rows)
          if rows else P("No obligations match.", cls="muted")),
-        title="Obligations · TaxHub")
+        title="Obligations · TaxHub", ctx="obligations")
 
 
 def urgency_badge(urg):
@@ -1245,7 +1315,7 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
         (Table(Tr(Th("Due"), Th("Urgency"), Th("Entity"), Th("Jur"), Th("Obligation"),
                   Th("Status"), Th("Rule")), *rows)
          if rows else P("No obligations match.", cls="muted")),
-        title="Calendar · TaxHub")
+        title="Calendar · TaxHub", ctx="calendar")
 
 
 @rt("/coverage")
@@ -1334,7 +1404,7 @@ window.addEventListener('resize',function(){if(window.Plotly){
           "breakdown (📄 downloadable · 🌐 online · 📘 reference).", cls="muted"),
         (Div(id="catcov") if cat["jurs"] else P("No forms yet.", cls="muted")),
         PLOTLY, data_script, plot_js,
-        title="Coverage · TaxHub")
+        title="Coverage · TaxHub", ctx="coverage")
 
 
 @rt("/admin/digest")
@@ -1426,7 +1496,7 @@ function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCa
                   "search and filter below, or upload a new PDF (pushed to the server volume).",
                   cls="muted"),
                 upload, H2("Stored documents"), filterbar, browser, js,
-                title="Documents · TaxHub")
+                title="Documents · TaxHub", ctx="documents")
 
 
 @rt("/upload", methods=["POST"])
@@ -1565,4 +1635,5 @@ def changes_page(sess, j: str = None):
                   style="font-weight:600"),
               (Div(c["ai_summary"], style="margin-top:4px;color:#6b7686")
                if c.get("ai_summary") else ""), cls="feed-item")
-          for c in chs])
+          for c in chs],
+        ctx="changes")
