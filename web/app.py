@@ -196,6 +196,7 @@ def left_pane(sess):
         Div(Div("Navigate", cls="lbl"),
             A("Dashboard", href="/dashboard", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
+            A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
             cls="section"),
         Div(Div("Recent chats", cls="lbl"),
@@ -472,6 +473,64 @@ def document(sess, doc_id: int, embed: int = 0):
     if embed:
         return (CSS, Div(body, cls="wrap"))
     return Page(body, title=f"{d['title'][:40]} · TaxHub")
+
+
+@rt("/documents")
+def documents(sess, uploaded: str = ""):
+    if (r := require(sess)):
+        return r
+    forms = store.list_forms(limit=2000)
+    with_pdf = [f for f in forms if f.get("file_path")]
+    cats = sorted({f.get("category") or "other" for f in forms})
+    jurs = ["JE", "GG", "LU", "IE", "KY", "VG"]
+    upload = Form(
+        H2("Upload a document"),
+        (P("✓ Uploaded.", style="color:#1c7c44") if uploaded else ""),
+        Div(
+            Input(type="file", name="doc_file", accept="application/pdf", required=True),
+            style="margin:8px 0"),
+        Div(Input(name="title", placeholder="Title (optional)", style="width:48%"),
+            Select(*[Option(JUR_NAMES.get(j, j), value=j) for j in jurs], name="jurisdiction",
+                   style="width:24%;margin:0 1%"),
+            Select(*[Option(CATEGORY_LABELS.get(c, c), value=c) for c in
+                     ["uploaded", "corporate_tax", "economic_substance", "aeoi",
+                      "beneficial_ownership", "fund", "other"]], name="category",
+                   style="width:24%"),
+            style="display:flex;gap:6px;align-items:center"),
+        Button("Upload PDF", cls="btn", style="margin-top:10px"),
+        method="post", action="/upload", enctype="multipart/form-data")
+    browser = Table(
+        Tr(Th("Jurisdiction"), Th("Category"), Th("Document"), Th("PDF")),
+        *[Tr(Td(f["jurisdiction_code"]), Td(f.get("category") or ""),
+             Td(A(f["title"], href=f"/form/{f['id']}")),
+             Td("📄" if f.get("file_path") else "link"))
+          for f in with_pdf[:300]])
+    return Page(H1("Documents"),
+                P(f"{len(with_pdf)} documents with stored PDFs · {len(forms)} total. "
+                  "Upload pushes a PDF to the server volume and registers it.", cls="muted"),
+                upload, H2("Stored documents"), browser, title="Documents · TaxHub")
+
+
+@rt("/upload", methods=["POST"])
+async def upload(sess, doc_file: UploadFile, jurisdiction: str = "JE",
+                 category: str = "uploaded", title: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from pathlib import Path
+    from ingest.scrapers.base import slugify
+    data = await doc_file.read()
+    name = title.strip() or (doc_file.filename or "document").rsplit(".", 1)[0]
+    key = "upload_" + (slugify(name) or "doc")
+    root = Path(__file__).resolve().parent.parent
+    dest = root / "data" / "forms" / jurisdiction / f"{key}.pdf"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    store.upsert_jurisdiction(jurisdiction, JUR_NAMES.get(jurisdiction, jurisdiction))
+    store.upsert_form({
+        "jurisdiction_code": jurisdiction, "category": category, "form_type": "form",
+        "form_key": key, "title": name[:160], "authority": "Uploaded",
+        "url": None, "file_path": str(dest.relative_to(root))})
+    return RedirectResponse("/documents?uploaded=1", status_code=303)
 
 
 @rt("/changes")
