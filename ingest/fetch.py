@@ -20,6 +20,7 @@ import hashlib
 import io
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 import warnings
 
@@ -38,6 +39,11 @@ UA = (
 )
 HEADERS = {"User-Agent": UA, "Accept-Language": "en-GB,en;q=0.9,fr;q=0.8"}
 
+# Government hosts that serve a valid cert but omit the intermediate CA in the
+# chain, so strict verification fails ("unable to get local issuer certificate").
+# The cert itself is genuine — we relax verification for these hosts only.
+INSECURE_HOSTS = {"www.mof.gov.cy", "mof.gov.cy"}
+
 # Tags whose text is navigational chrome, not document content.
 _STRIP_TAGS = ["script", "style", "noscript", "nav", "header", "footer",
                "form", "svg", "iframe", "button"]
@@ -49,7 +55,11 @@ _STRIP_TAGS = ["script", "style", "noscript", "nav", "header", "footer",
 
 def fetch_http(url: str, timeout: float = 60.0) -> dict:
     """GET a URL. Returns {content: bytes, headers: dict, content_type, url}."""
-    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=timeout) as c:
+    verify = urlparse(url).hostname not in INSECURE_HOSTS
+    if not verify:
+        warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+    with httpx.Client(follow_redirects=True, headers=HEADERS, timeout=timeout,
+                      verify=verify) as c:
         r = c.get(url)
         r.raise_for_status()
         return {

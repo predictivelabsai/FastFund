@@ -153,3 +153,530 @@ jurisdictions:
         frequency: annual
         deadline: "Within 6 months of the end of the financial period"
         legislation_ref: https://bviita.vg/economic-substance
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # EXPANSION — all JTC Group office jurisdictions (researched & verified 2026-06)
+  # Filing reality varies sharply: most authorities are ONLINE-only (we store the
+  # portal link + metadata), a minority publish real downloadable PDFs (US/IRS,
+  # Hong Kong, Austria, Poland, New Zealand, Bermuda). `forms_index` (discover-all)
+  # is set ONLY where the index is a clean, bounded, static PDF list safe to crawl.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  IM:
+    name: Isle of Man
+    authority: Income Tax Division (Treasury)
+    index_filing_type: online            # gov.im HTML is geo/JS-gated; return is online-only
+    forms:
+      - form_key: company_income_tax_return
+        title: Company Income Tax Return (Isle of Man)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.gov.im/categories/tax-vat-and-your-money/income-tax-and-national-insurance/online-services/
+        who_files: Isle of Man resident and relevant companies (filed via Online Services)
+        frequency: annual
+        deadline: "12 months and 1 day after the end of the accounting period"
+        legislation_ref: https://legislation.gov.im/cms/
+      - form_key: economic_substance
+        title: Economic Substance — reported within the company return (Isle of Man)
+        category: economic_substance
+        form_type: return
+        mode: portal
+        url: https://www.gov.im/categories/tax-vat-and-your-money/income-tax-and-national-insurance/
+        who_files: Companies with income from EU-relevant activities (fund management, finance & leasing, holding)
+        frequency: annual
+        deadline: "With the company income tax return"
+        legislation_ref: https://legislation.gov.im/cms/
+
+  MU:
+    name: Mauritius
+    authority: Mauritius Revenue Authority (MRA)
+    index_filing_type: online
+    forms:
+      - form_key: it_form_3_company_return
+        title: Annual Return of Income — Company (IT Form 3, Mauritius)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.mra.mu/index.php/eservices1/corporate/company-trust-return
+        who_files: Companies (incl. Global Business Corporations), sociétés and trusts
+        frequency: annual
+        deadline: "Within 6 months of the end of the month in which the accounting period closes"
+        legislation_ref: https://www.mra.mu/
+      - form_key: company_return_notes
+        title: Notes — Company Return (Mauritius, guidance)
+        category: corporate_tax
+        form_type: guidance
+        mode: download
+        url: https://www.mra.mu/download/NotesCT03_2526.pdf
+        filing_type: reference
+        who_files: Companies completing the annual return of income
+        frequency: annual
+        legislation_ref: https://www.mra.mu/
+
+  MT:
+    name: Malta
+    authority: Malta Tax and Customs Administration (Commissioner for Tax and Customs)
+    index_browser: true                  # mtca.gov.mt is anti-bot gated; CIT return is e-filed
+    forms:
+      - form_key: cit_return_companies
+        title: Company Income Tax Return & Self-Assessment (Malta)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://mtca.gov.mt/business-tax/corporate/Income_Tax
+        who_files: Companies registered for income tax in Malta (incorporated, or managed-and-controlled, in Malta)
+        frequency: annual
+        deadline: "Later of 9 months after financial year-end or 31 March following the year of assessment"
+        legislation_ref: https://legislation.mt/eli/cap/123/eng/pdf
+      - form_key: cgt_schedule_b
+        title: Capital Gains Tax — Schedule B (Malta)
+        category: corporate_tax
+        form_type: declaration
+        mode: download
+        url: https://mtca.gov.mt/docs/default-source/documents/business-tax/corporate/downloads/cgt_schedule_b.pdf?sfvrsn=22e509da_1
+        who_files: Companies and entities reporting capital gains transactions
+        frequency: per transaction / annual
+        legislation_ref: https://legislation.mt/eli/cap/123/eng/pdf
+
+  CY:
+    name: Cyprus
+    authority: Tax Department (Ministry of Finance)
+    # mof.gov.cy serves a valid cert but an incomplete chain — see INSECURE_HOSTS.
+    forms:
+      - form_key: td4_company_income_tax_return
+        title: T.D.4 Company Income Tax Return (Cyprus)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.mof.gov.cy/mof/tax/taxdep.nsf/All/02C5DB7A909CAA19C2258C3C003BA9D6/$file/2023_TD4_return_20240801.pdf?OpenElement=
+        filing_type: downloadable
+        who_files: Cyprus tax-resident companies (general companies e-file via TAXISnet; this PDF serves financial institutions)
+        frequency: annual
+        deadline: "31 March of the second year following the tax year"
+        legislation_ref: https://www.mof.gov.cy/mof/tax/taxdep.nsf/ced01_en/ced01_en?OpenDocument
+
+  NL:
+    name: Netherlands
+    authority: Belastingdienst
+    index_filing_type: online
+    forms:
+      - form_key: vpb_corporate_income_tax_return
+        title: Aangifte vennootschapsbelasting (Corporate Income Tax Return, Netherlands)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://ondernemersplein.overheid.nl/geldzaken-en-belastingen/alles-over-aangifte-doen/aangifte-vennootschapsbelasting-vpb-doen/
+        who_files: Every bv and nv; foundations/associations running an enterprise (filed via Mijn Belastingdienst Zakelijk)
+        frequency: annual
+        deadline: "Within 5 months of the financial year-end (before 1 June for calendar-year companies)"
+        legislation_ref: https://wetten.overheid.nl/BWBR0002672
+
+  CH:
+    name: Switzerland
+    authority: Federal Tax Administration (ESTV/AFC) + cantonal authorities
+    index_filing_type: online
+    forms:
+      - form_key: corporate_tax_return_cantonal
+        title: Steuererklärung für juristische Personen (Corporate Tax Return — cantonal, e.g. Zug)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://zg.ch/en/finanzdirektion/steuerverwaltung/juristische-personen
+        who_files: Legal entities with seat or effective management in the canton (corporate income & capital tax is assessed cantonally)
+        frequency: annual
+        deadline: "Cantonal deadline, set per tax package each year (extensions available)"
+        legislation_ref: https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/de
+
+  GB:
+    name: United Kingdom
+    authority: HM Revenue & Customs (HMRC)
+    index_filing_type: online
+    forms:
+      - form_key: ct600_company_tax_return
+        title: Company Tax Return (CT600, United Kingdom)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.gov.uk/government/publications/corporation-tax-company-tax-return-ct600-2015-version-3
+        filing_type: online
+        who_files: Every UK company within the charge to Corporation Tax (filed online via commercial software)
+        frequency: annual
+        deadline: "Within 12 months of the end of the accounting period"
+        legislation_ref: https://www.legislation.gov.uk/ukpga/2010/4/contents
+
+  DE:
+    name: Germany
+    authority: ELSTER (Länder tax administration) / local Finanzamt
+    index_filing_type: online
+    forms:
+      - form_key: kst_1_corporate_tax_return
+        title: Körperschaftsteuererklärung (KSt 1, Germany)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.elster.de/eportal/formulare-leistungen/alleformulare/kst
+        who_files: Corporations and other entities subject to Körperschaftsteuer (GmbH, AG, …) — mandatory e-filing via Mein ELSTER
+        frequency: annual
+        deadline: "Generally by the end of the 7th month after year-end (later if filed by a tax adviser)"
+        legislation_ref: https://www.gesetze-im-internet.de/kstg_1977/
+
+  AT:
+    name: Austria
+    authority: Bundesministerium für Finanzen (BMF) / FinanzOnline
+    forms:
+      - form_key: k1_koerperschaftsteuer
+        title: K1 — Körperschaftsteuererklärung (Corporate Income Tax Return, Austria)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://formulare.bmf.gv.at/service/formulare/inter-Steuern/pdfs/2025/K1.pdf
+        filing_type: downloadable
+        who_files: Accounting-obligated corporations (GmbH, AG) subject to Körperschaftsteuer
+        frequency: annual
+        deadline: "30 April of the following year (30 June if filed electronically via FinanzOnline)"
+        legislation_ref: https://www.ris.bka.gv.at/GeltendeFassung.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004569
+
+  PL:
+    name: Poland
+    authority: Krajowa Administracja Skarbowa (Ministry of Finance)
+    forms_index: https://www.podatki.gov.pl/cit/formularze-do-druku-cit/
+    index_category: corporate_tax
+    index_form_type: return
+    index_filing_type: downloadable
+    forms:
+      - form_key: cit8_return
+        title: CIT-8 — Corporate Income Tax Return (Poland)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.gov.pl/attachment/b6901dbb-05bf-4d5b-b1be-52fd86fc753d
+        filing_type: downloadable
+        who_files: Legal persons / CIT payers
+        frequency: annual
+        deadline: "Within 3 months after the end of the tax year (31 March for calendar-year filers)"
+        legislation_ref: https://isap.sejm.gov.pl/isap.nsf/DocDetails.xsp?id=WDU19920210086
+
+  US:
+    name: United States
+    authority: Internal Revenue Service (IRS) + state authorities
+    # IRS publishes thousands of static PDFs at /pub/irs-pdf/ — we curate the
+    # fund/corporate-relevant ones rather than crawl the full A-Z catalogue.
+    forms:
+      - form_key: form_1120
+        title: Form 1120 — U.S. Corporation Income Tax Return
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f1120.pdf
+        who_files: Domestic C corporations
+        frequency: annual
+        deadline: "15th day of the 4th month after year-end (15 April for calendar-year)"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-1120
+      - form_key: form_1120_f
+        title: Form 1120-F — U.S. Income Tax Return of a Foreign Corporation
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f1120f.pdf
+        who_files: Foreign corporations with U.S. income / effectively connected income
+        frequency: annual
+        deadline: "15th day of the 4th month after year-end (6th month if no U.S. office)"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-1120-f
+      - form_key: form_1065
+        title: Form 1065 — U.S. Return of Partnership Income
+        category: partnership
+        form_type: return
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f1065.pdf
+        who_files: Partnerships and multi-member LLCs
+        frequency: annual
+        deadline: "15th day of the 3rd month after year-end (15 March for calendar-year)"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-1065
+      - form_key: form_5472
+        title: Form 5472 — Information Return of a 25% Foreign-Owned U.S. Corporation
+        category: aeoi
+        form_type: report
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f5472.pdf
+        who_files: 25%-or-more foreign-owned U.S. corporations and foreign-owned U.S. disregarded entities
+        frequency: annual
+        deadline: "Filed with the income tax return (Form 1120)"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-5472
+      - form_key: form_5471
+        title: Form 5471 — Information Return w.r.t. Certain Foreign Corporations
+        category: aeoi
+        form_type: report
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f5471.pdf
+        who_files: U.S. persons who are officers, directors or shareholders in certain foreign corporations
+        frequency: annual
+        deadline: "Filed with the filer's income tax return"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-5471
+      - form_key: form_8865
+        title: Form 8865 — Return w.r.t. Certain Foreign Partnerships
+        category: partnership
+        form_type: report
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f8865.pdf
+        who_files: U.S. persons controlling or holding interests in foreign partnerships
+        frequency: annual
+        deadline: "Filed with the filer's income tax return"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-8865
+      - form_key: form_8832
+        title: Form 8832 — Entity Classification Election (check-the-box)
+        category: corporate_tax
+        form_type: declaration
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/f8832.pdf
+        who_files: Eligible entities electing their U.S. federal tax classification
+        frequency: as needed
+        deadline: "Effective up to 75 days before / 12 months after filing"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-8832
+      - form_key: form_w8_ben_e
+        title: Form W-8BEN-E — Certificate of Status of Beneficial Owner (Entities)
+        category: aeoi
+        form_type: declaration
+        mode: download
+        url: https://www.irs.gov/pub/irs-pdf/fw8bene.pdf
+        who_files: Foreign entities receiving U.S.-source income (provided to the withholding agent)
+        frequency: as needed
+        deadline: "Provided to the payer before payment; generally valid ~3 years"
+        legislation_ref: https://www.irs.gov/forms-pubs/about-form-w-8-ben-e
+      - form_key: de_annual_report_franchise_tax
+        title: Delaware Annual Report & Franchise Tax
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://corp.delaware.gov/frtax/
+        filing_type: online
+        who_files: All Delaware-incorporated corporations (foreign corporations file an annual report)
+        frequency: annual
+        deadline: "1 March (domestic corporations); 30 June (foreign corporations)"
+        legislation_ref: https://corp.delaware.gov/frtax/
+      - form_key: wy_annual_report
+        title: Wyoming Annual Report (License Tax)
+        category: corporate_tax
+        form_type: report
+        mode: portal
+        url: https://wyobiz.wyo.gov/Business/AnnualReport.aspx
+        filing_type: online
+        who_files: Corporations, LLCs, LPs and statutory trusts registered in Wyoming (no state corporate income tax)
+        frequency: annual
+        deadline: "First day of the anniversary month of formation"
+        legislation_ref: https://wyobiz.wyo.gov/Business/AnnualReport.aspx
+      - form_key: sd_annual_report
+        title: South Dakota Business Annual Report
+        category: corporate_tax
+        form_type: report
+        mode: portal
+        url: https://sosenterprise.sd.gov/BusinessServices/Business/AnnualReportInstr.aspx
+        filing_type: online
+        who_files: All South Dakota-registered corporations, LLCs and LPs (no state income tax)
+        frequency: annual
+        deadline: "End of the entity's anniversary month"
+        legislation_ref: https://sosenterprise.sd.gov/BusinessServices/Business/AnnualReportInstr.aspx
+
+  HK:
+    name: Hong Kong
+    authority: Inland Revenue Department (IRD)
+    forms_index: https://www.ird.gov.hk/eng/tax/bus_returnspecimen.htm
+    index_category: corporate_tax
+    index_form_type: return
+    index_filing_type: downloadable
+    forms:
+      - form_key: bir51_profits_tax_return_corporations
+        title: Profits Tax Return — Corporations (BIR51, Hong Kong)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.ird.gov.hk/eng/pdf/ebir512.pdf
+        who_files: Incorporated companies carrying on business in Hong Kong
+        frequency: annual
+        deadline: "Within ~1 month of the date of issue (Block Extension Scheme by accounting-date code)"
+        legislation_ref: https://www.elegislation.gov.hk/hk/cap112
+      - form_key: bir52_profits_tax_return_non_corporations
+        title: Profits Tax Return — Persons Other Than Corporations (BIR52, Hong Kong)
+        category: partnership
+        form_type: return
+        mode: download
+        url: https://www.ird.gov.hk/eng/pdf/ebir522.pdf
+        who_files: Partnerships and bodies of persons carrying on business in Hong Kong
+        frequency: annual
+        deadline: "Within ~1 month of the date of issue"
+        legislation_ref: https://www.elegislation.gov.hk/hk/cap112
+      - form_key: bir54_profits_tax_return_non_residents
+        title: Profits Tax Return — Non-Resident Persons (BIR54, Hong Kong)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.ird.gov.hk/eng/pdf/bir542.pdf
+        who_files: Non-resident persons chargeable to Hong Kong profits tax
+        frequency: annual
+        deadline: "Within ~1 month of the date of issue"
+        legislation_ref: https://www.elegislation.gov.hk/hk/cap112
+
+  SG:
+    name: Singapore
+    authority: Inland Revenue Authority of Singapore (IRAS)
+    index_filing_type: online
+    forms:
+      - form_key: form_c_corporate_income_tax_return
+        title: Form C — Corporate Income Tax Return (Singapore)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.iras.gov.sg/taxes/corporate-income-tax
+        who_files: Companies that do not qualify for Form C-S / C-S (Lite) (filed online via myTax Portal)
+        frequency: annual
+        deadline: "30 November of the Year of Assessment"
+        legislation_ref: https://sso.agc.gov.sg/Act/ITA1947
+
+  MY:
+    name: Malaysia
+    authority: Lembaga Hasil Dalam Negeri Malaysia (LHDN / Inland Revenue Board)
+    index_filing_type: online
+    forms:
+      - form_key: form_c_company_return
+        title: Form C — Company Return (Malaysia, sample)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.hasil.gov.my/media/1offthzg/samplerf_c2025_2.pdf
+        filing_type: reference
+        who_files: All resident and non-resident companies (mandatory e-Filing via MyTax; this is the sample/specimen PDF)
+        frequency: annual
+        deadline: "Within 7 months after the close of the accounting period"
+        legislation_ref: https://www.hasil.gov.my/en/company/corporate-tax/
+
+  NZ:
+    name: New Zealand
+    authority: Inland Revenue (Te Tari Taake)
+    forms_index: https://www.ird.govt.nz/income-tax/income-tax-for-businesses-and-organisations/income-tax-for-companies/file-a-companies-income-tax-return-ir4
+    index_category: corporate_tax
+    index_form_type: return
+    index_filing_type: downloadable
+    forms:
+      - form_key: ir4_company_income_tax_return
+        title: IR4 — Company Income Tax Return (New Zealand)
+        category: corporate_tax
+        form_type: return
+        mode: download
+        url: https://www.ird.govt.nz/-/media/project/ir/home/documents/forms-and-guides/ir1---ir99/ir4/ir4-2026.pdf
+        who_files: New Zealand resident and non-resident companies
+        frequency: annual
+        deadline: "7 July for a standard 31 March balance date (later with a tax-agent extension)"
+        legislation_ref: https://www.legislation.govt.nz/act/public/2007/0097/latest/DLM1512301.html
+
+  AE:
+    name: United Arab Emirates
+    authority: Federal Tax Authority (FTA)
+    index_filing_type: online
+    forms:
+      - form_key: corporate_tax_return
+        title: UAE Corporate Tax Return
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://tax.gov.ae/en/emaratax.aspx
+        who_files: Taxable persons subject to UAE Corporate Tax (filed via the EmaraTax portal)
+        frequency: annual
+        deadline: "Within 9 months of the end of the relevant tax period"
+        legislation_ref: https://tax.gov.ae/en/taxes/corporate.tax.aspx
+
+  BS:
+    name: Bahamas
+    authority: Department of Inland Revenue
+    index_filing_type: online
+    forms:
+      - form_key: economic_substance_report
+        title: CESRA Economic Substance Report (Bahamas)
+        category: economic_substance
+        form_type: report
+        mode: portal
+        url: https://inlandrevenue.finance.gov.bs/substance-reporting-cesra/
+        who_files: All Bahamas-incorporated entities (filed via the substance reporting portal using an Entity Identification Number)
+        frequency: annual
+        deadline: "Within 9 months after fiscal year-end"
+        legislation_ref: https://inlandrevenue.finance.gov.bs/substance-reporting-cesra/
+      - form_key: business_licence_application
+        title: Business Licence Application / Renewal (Bahamas)
+        category: corporate_tax
+        form_type: registration
+        mode: portal
+        url: https://inlandrevenue.finance.gov.bs/business-licence/
+        who_files: Persons and entities carrying on business in The Bahamas
+        frequency: annual
+        deadline: "Annual renewal by 31 January"
+        legislation_ref: https://inlandrevenue.finance.gov.bs/business-licence/
+
+  BR:
+    name: Brazil
+    authority: Secretaria Especial da Receita Federal do Brasil (RFB)
+    index_filing_type: online
+    forms:
+      - form_key: ecf_corporate_return
+        title: Escrituração Contábil Fiscal (ECF, Brazil)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/download/sped/ecf
+        who_files: Legal entities taxed on real, presumed or arbitrated profit (digital file submitted via SPED/PVA)
+        frequency: annual
+        deadline: "Last business day of July of the year following the calendar year"
+        legislation_ref: https://www.gov.br/receitafederal/
+
+  ZA:
+    name: South Africa
+    authority: South African Revenue Service (SARS)
+    index_filing_type: online
+    forms:
+      - form_key: itr14_company_return
+        title: ITR14 — Income Tax Return for Companies (South Africa)
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.sars.gov.za/types-of-tax/corporate-income-tax/
+        who_files: All companies resident in, or with income sourced in, South Africa (filed via SARS eFiling)
+        frequency: annual
+        deadline: "Within 12 months of the company's financial year-end"
+        legislation_ref: https://www.sars.gov.za/types-of-tax/corporate-income-tax/
+      - form_key: itr14_completion_guide
+        title: How to Complete the ITR14 for Companies (SARS guide)
+        category: corporate_tax
+        form_type: guidance
+        mode: download
+        url: https://www.sars.gov.za/wp-content/uploads/IT-GEN-04-G01-How-to-complete-the-Income-Tax-Return-ITR14-for-Companies-External-Guide.pdf
+        filing_type: reference
+        who_files: Companies completing the ITR14 return
+        legislation_ref: https://www.sars.gov.za/types-of-tax/corporate-income-tax/
+
+  BM:
+    name: Bermuda
+    authority: Registrar of Companies / Corporate Income Tax Agency
+    forms_index: https://www.gov.bm/changes-annual-declarations-all-entities
+    index_category: economic_substance
+    index_form_type: declaration
+    index_filing_type: downloadable
+    forms:
+      - form_key: economic_substance_declaration
+        title: Economic Substance Declaration Form (Bermuda)
+        category: economic_substance
+        form_type: declaration
+        mode: download
+        source: https://www.gov.bm/changes-annual-declarations-all-entities
+        match: ".pdf"
+        who_files: Bermuda companies, LLCs and partnerships carrying on a relevant activity (incl. fund management)
+        frequency: annual
+        deadline: "Within 6 months of the financial year-end"
+        legislation_ref: https://www.gov.bm/economic-substance
+      - form_key: corporate_income_tax_return
+        title: Bermuda Corporate Income Tax Return
+        category: corporate_tax
+        form_type: return
+        mode: portal
+        url: https://www.gov.bm/CIT
+        who_files: Bermuda Constituent Entities of in-scope MNE Groups (annual revenue >= EUR 750M)
+        frequency: annual
+        deadline: "By the 15th day of the 10th month after fiscal year-end"
+        legislation_ref: https://www.gov.bm/CIT

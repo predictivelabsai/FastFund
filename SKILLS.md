@@ -127,6 +127,15 @@ python3.12 -m ingest.cli --all       # (re)capture legislation -> data/raw + (:D
 python3.12 -m ingest.cli --forms     # scrape forms -> data/forms + (:Form)
 ```
 
+**Coverage = 26 jurisdictions** (config `tax_forms.yaml`): the 6 MVP domiciles
+(JE GG LU IE KY VG) plus all JTC office jurisdictions (IM MU MT CY NL CH GB DE AT
+PL US HK SG MY NZ AE BS BR ZA BM). Most authorities are **online-filing** (stored
+as `filing_type: online` with a portal link); real downloadable PDFs come from
+US/IRS, Hong Kong, New Zealand, Poland, Bermuda, Luxembourg, Guernsey. `forms_index`
+(discover-all crawl) is set only on clean static PDF indexes; portal/JS sites are
+curated-only. **TLS:** hosts with an incomplete cert chain (e.g. `mof.gov.cy`) are
+listed in `ingest.fetch.INSECURE_HOSTS` so their valid PDFs still download.
+
 **Headless vs headed / Cloudflare (verified 2026-06-13):**
 - Guernsey **legislation** site `guernseylegalresources.gg` is behind Cloudflare; raw httpx gets
   `403 / "Just a moment"`. It's a **passive JS challenge** (no Turnstile) — a **headed real Chromium

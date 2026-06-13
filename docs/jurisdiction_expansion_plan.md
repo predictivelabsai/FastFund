@@ -1,9 +1,32 @@
 # TaxHub — Jurisdiction Expansion Plan
 
 Extend coverage from the 6 MVP domiciles to **all jurisdictions JTC Group
-operates in** (sourced from jtcgroup.com/offices), reusing the existing
-forms-first pattern. No new architecture — each jurisdiction is just config +
-a scrape.
+operates in** (sourced from jtcgroup.com/offices — ~24 distinct jurisdictions),
+reusing the existing forms-first pattern. No new architecture — each
+jurisdiction is just config + a scrape.
+
+## ✅ Status — COMPLETE (all 24 + 2 implemented, 2026-06)
+
+`config/tax_forms.yaml` now carries **26 jurisdiction blocks** covering every JTC
+office jurisdiction. All authority forms pages were researched and the URLs
+verified before adding. Scraping yield (downloaded PDFs vs portal/metadata):
+
+| Yield class | Jurisdictions | Notes |
+|-------------|---------------|-------|
+| **High downloadable PDF yield** | US/IRS (8 key forms), Hong Kong (BIR51/52/54 + notes), New Zealand (IR4 + guides), Luxembourg (126), Guernsey (71), Bermuda (ES declarations), Poland (CIT-8), Cyprus (TD4) | Real fillable/return PDFs harvested directly |
+| **Metadata + portal link (online filing)** | Jersey, Ireland, Cayman, BVI, Isle of Man, Mauritius, Netherlands, UK, Germany, Switzerland, Singapore, UAE, Bahamas, Brazil, South Africa, Delaware/Wyoming/South Dakota | Returns filed via e-portal — we store the portal URL + full metadata |
+| **Gated (metadata only)** | Malta (anti-bot), Austria K1 (interactive AcroForm loader) | Recorded with authority URL; PDF not directly fetchable |
+
+Two infra notes from the build:
+- **TLS:** `mof.gov.cy` (Cyprus) serves an incomplete cert chain — added to
+  `ingest.fetch.INSECURE_HOSTS` so its valid-but-unchained PDFs download.
+- **Discover-all** (`forms_index`) is enabled only for clean, bounded, static PDF
+  indexes (GG, LU, PL, HK, NZ, BM); JS/portal sites are curated-only to avoid
+  crawling e-filing SPAs or the IRS's 3,000-PDF catalogue.
+
+---
+
+## Original plan (for reference)
 
 ## The repeatable pattern (per jurisdiction)
 

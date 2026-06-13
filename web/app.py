@@ -30,8 +30,17 @@ CATEGORY_LABELS = {
     "partnership": "Partnerships", "personal_employer": "Personal / employer",
     "gst_vat": "GST / VAT", "fund": "Fund-specific", "other": "Other",
 }
-JUR_NAMES = {"JE": "Jersey", "GG": "Guernsey", "LU": "Luxembourg",
-             "IE": "Ireland", "KY": "Cayman Islands", "VG": "British Virgin Islands"}
+JUR_NAMES = {
+    # Live MVP domiciles
+    "JE": "Jersey", "GG": "Guernsey", "LU": "Luxembourg", "IE": "Ireland",
+    "KY": "Cayman Islands", "VG": "British Virgin Islands",
+    # Expansion — all JTC Group office jurisdictions
+    "IM": "Isle of Man", "MU": "Mauritius", "MT": "Malta", "CY": "Cyprus",
+    "NL": "Netherlands", "CH": "Switzerland", "GB": "United Kingdom", "DE": "Germany",
+    "AT": "Austria", "PL": "Poland", "US": "United States", "HK": "Hong Kong",
+    "SG": "Singapore", "MY": "Malaysia", "NZ": "New Zealand", "AE": "United Arab Emirates",
+    "BS": "Bahamas", "BR": "Brazil", "ZA": "South Africa", "BM": "Bermuda",
+}
 FILING_LABELS = {"downloadable": "📄 Downloadable form", "online": "🌐 Online filing",
                  "reference": "📘 Reference / guidance"}
 FORM_TYPE_LABELS = {"return": "Return", "notification": "Notification",
@@ -501,7 +510,7 @@ def documents(sess, uploaded: str = ""):
     forms = store.list_forms(limit=2000)
     with_pdf = [f for f in forms if f.get("file_path")]
     cats = sorted({f.get("category") or "other" for f in forms})
-    jurs = ["JE", "GG", "LU", "IE", "KY", "VG"]
+    jurs = sorted({f["jurisdiction_code"] for f in forms}) or list(JUR_NAMES)
     upload = Form(
         H2("Upload a document"),
         (P("✓ Uploaded.", style="color:#1c7c44") if uploaded else ""),

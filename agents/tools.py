@@ -60,7 +60,8 @@ def law_agent(question: str) -> str:
 def metadata_agent(jurisdiction_code: str = "", category: str = "") -> str:
     """List the tax forms (and their deadlines) for a jurisdiction and/or
     category — a structured lookup. Use for "what forms are there for Cayman" or
-    "AEOI forms". jurisdiction_code is a 2-letter code (JE, GG, LU, IE, KY, VG)."""
+    "AEOI forms". jurisdiction_code is a 2-letter code, e.g. JE GG LU IE KY VG
+    (MVP) or IM MU MT CY NL CH GB DE AT PL US HK SG MY NZ AE BS BR ZA BM."""
     forms = store.list_forms(jurisdiction_code=jurisdiction_code or None,
                              category=category or None, limit=50)
     if not forms:
