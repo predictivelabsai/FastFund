@@ -1293,10 +1293,15 @@ function heat(id, d, opts){
 }
 var PUR=[[0,'#faf7fb'],[0.5,'#d3a9d0'],[1,'#6b1766']];
 var GRN=[[0,'#f5faf6'],[0.5,'#9fcfb0'],[1,'#1c7c44']];
-heat('pfcov', window.PFCOV, {scale:PUR});
-heat('catcov', window.CATCOV, {scale:GRN});
+function drawCoverage(){
+  if(!window.Plotly){return setTimeout(drawCoverage,60);}
+  if(window.PFCOV&&document.getElementById('pfcov'))heat('pfcov',window.PFCOV,{scale:PUR});
+  if(window.CATCOV&&document.getElementById('catcov'))heat('catcov',window.CATCOV,{scale:GRN});
+}
+drawCoverage();
 window.addEventListener('resize',function(){if(window.Plotly){
-  Plotly.Plots.resize('pfcov');Plotly.Plots.resize('catcov');}});
+  if(document.getElementById('pfcov'))Plotly.Plots.resize('pfcov');
+  if(document.getElementById('catcov'))Plotly.Plots.resize('catcov');}});
 """)
     return Page(
         H1("Coverage map"),
@@ -1311,7 +1316,7 @@ window.addEventListener('resize',function(){if(window.Plotly){
         P("Forms held per jurisdiction × category. Hover a cell for the filing-type "
           "breakdown (📄 downloadable · 🌐 online · 📘 reference).", cls="muted"),
         (Div(id="catcov") if cat["jurs"] else P("No forms yet.", cls="muted")),
-        data_script, plot_js, PLOTLY,
+        PLOTLY, data_script, plot_js,
         title="Coverage · TaxHub")
 
 
