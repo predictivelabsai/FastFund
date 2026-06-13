@@ -186,6 +186,58 @@ def logout(sess):
     return RedirectResponse("/login", status_code=303)
 
 
+# ── Admin: refresh the forms catalogue (scrape) from inside the container ──────
+# Runs the same scrape as `python -m ingest.cli --forms`, but in-process so the
+# downloaded PDFs land on the persistent /app/data volume and metadata is written
+# to the live store. Gated by a session OR the APP_SECRET token (for curl/ops).
+# Long-running, so it runs in a daemon thread; poll /admin/refresh-status.
+_REFRESH = {"running": False, "done": False, "log": [], "summary": None}
+
+
+def _admin_ok(sess, token: str) -> bool:
+    return (require(sess) is None) or (
+        bool(token) and token == os.environ.get("APP_SECRET", "taxhub-2026"))
+
+
+def _run_refresh(jurisdiction):
+    from ingest.forms import scrape_forms, load_catalogue
+    _REFRESH.update(running=True, done=False, log=[], summary=None)
+    try:
+        codes = [jurisdiction] if jurisdiction else list(load_catalogue())
+        agg = {"recorded": 0, "downloaded": 0, "portal": 0, "failed_downloads": 0}
+        for c in codes:
+            r = scrape_forms(c, download=True)
+            for k in agg:
+                agg[k] += r.get(k, 0)
+            _REFRESH["log"].append(
+                f"{c}: recorded={r['recorded']} downloaded={r['downloaded']} "
+                f"portal={r['portal']} failed={r['failed_downloads']}")
+        _REFRESH["summary"] = agg
+    except Exception as e:  # noqa: BLE001
+        _REFRESH["log"].append(f"ERROR: {e!r}")
+    finally:
+        _REFRESH.update(running=False, done=True)
+
+
+@rt("/admin/refresh-forms")
+def refresh_forms(sess, token: str = "", jurisdiction: str = ""):
+    import threading
+    if not _admin_ok(sess, token):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if _REFRESH["running"]:
+        return JSONResponse({"status": "already running", **_REFRESH})
+    threading.Thread(target=_run_refresh, args=(jurisdiction or None,),
+                     daemon=True).start()
+    return JSONResponse({"status": "started", "jurisdiction": jurisdiction or "ALL"})
+
+
+@rt("/admin/refresh-status")
+def refresh_status(sess, token: str = ""):
+    if not _admin_ok(sess, token):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(_REFRESH)
+
+
 # ── 3-pane components ───────────────────────────────────────────────────────
 def tree_component():
     nodes = []

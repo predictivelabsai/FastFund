@@ -1,14 +1,18 @@
 # TaxHub — Architecture
 
-Tax-law traceability for a fund-management back office. TaxHub scrapes official
-tax documents across the jurisdictions JTC Group operates in, captures **every
-version**, detects and explains **every change**, traces guidance back to the
-**primary law** it interprets, and answers questions over the resulting
-citation/change graph.
+[TOC]
+
+Tax-form finding and tax-law traceability for a fund-management back office.
+TaxHub's primary job is to help the back office find the **correct tax form** to
+file across the jurisdictions JTC Group operates in; secondarily it scrapes
+official tax documents, captures **every version**, detects and explains **every
+change**, traces guidance back to the **primary law** it interprets, and answers
+questions over the resulting citation/change graph.
 
 This document describes the implemented system: components, data model, data
-flow, the graph-RAG agent, configuration, and deployment (local → Coolify →
-AuraDB). For a quick start see the top-level [`README.md`](../README.md).
+flow, the LangGraph agent orchestrator + graph-RAG retrieval, configuration, and
+deployment (local → Coolify → AuraDB). For a quick start see the top-level
+[`README.md`](../README.md).
 
 ---
 
@@ -16,37 +20,73 @@ AuraDB). For a quick start see the top-level [`README.md`](../README.md).
 
 | Area | Feature | Where |
 |------|---------|-------|
-| **Ingest** | Config-driven catalogue, one entry per document | `config/tax_sources.yaml` |
-| | HTTP + headless-browser fetch (JS/UA-gated sites) | `taxfetch.py` |
-| | HTML + PDF text extraction, normalised + SHA-256 hashed | `taxfetch.py` |
-| **Versioning** | Immutable version appended only when the content hash changes | `storage/*`, `scrape_tax.py` |
-| | Consecutive-version diffs (added/removed chars + diff text) | `scrape_tax.py`, `taxai.py` |
-| **AI** | Grok plain-English change summary + back-office impact | `taxai.py` |
-| | Citation extraction (guidance → statutory instruments) | `taxai.py` |
-| | Graceful degradation when no `XAI_API_KEY` is set | `taxai.py`, `taxrag.py` |
+| **Forms** | Config-driven form catalogue, 26 jurisdictions | `config/tax_forms.yaml`, `ingest/forms.py` |
+| | Form metadata + PDF download / discover-all over authority indexes | `ingest/forms.py`, `ingest/scrapers/` |
+| | Forms Tree taxonomy (jurisdiction → category → type → form) | `ingest/forms.py:forms_tree` |
+| **Ingest** | Config-driven document catalogue | `config/tax_sources.yaml`, `ingest/cli.py` |
+| | HTTP + headless-browser fetch (JS/UA-gated sites) | `ingest/fetch.py`, `ingest/scrapers/` |
+| | HTML + PDF text extraction, normalised + SHA-256 hashed | `ingest/fetch.py` |
+| **Versioning** | Immutable version appended only when the content hash changes | `storage/*`, `ingest/cli.py` |
+| | Consecutive-version diffs (added/removed chars + diff text) | `ingest/cli.py`, `rag/llm.py` |
+| **AI** | Grok plain-English change summary + back-office impact | `rag/llm.py` |
+| | Citation extraction (guidance → statutory instruments) | `rag/llm.py` |
+| | Graceful degradation when no `XAI_API_KEY` is set | `rag/llm.py`, `rag/retrieval.py`, `agents/orchestrator.py` |
+| **Agents** | LangGraph tool-calling orchestrator routing to 4 specialist agents | `agents/orchestrator.py`, `agents/tools.py` |
+| | SSE token + tool-step streaming to the UI | `agents/sse.py`, `agents/orchestrator.py` |
 | **Storage** | Backend-neutral `Storage` interface | `storage/base.py` |
 | | Neo4j graph backend (default) | `storage/neo4j_store.py` |
 | | SQLite / Postgres relational backend | `storage/sqlite_store.py` |
 | | One-line backend switch via `DATA_STORAGE` | `storage/__init__.py` |
-| | SQLite → Neo4j backfill migration | `migrate_sqlite_to_neo4j.py` |
-| **Graph-RAG** | "Ask the law": full-text seed → graph expansion → Grok answer with cited sources | `taxrag.py`, `/ask` |
-| **Web app** | FastHTML viewer: jurisdictions, documents, versions, changes, citations | `taxapp.py` |
-| **CLI** | `--list / --jurisdiction / --all / --changes / --stats / --no-ai` | `scrape_tax.py` |
+| | SQLite → Neo4j backfill migration | `scripts/migrate_sqlite_to_neo4j.py` |
+| **Retrieval** | Full-text seed → graph expansion → Grok answer with cited sources | `rag/retrieval.py` |
+| | Vector + hybrid (RRF) retrievers over fastembed chunk embeddings | `rag/retrieval.py`, `rag/embeddings.py` |
+| | Chunk-embedding backfill | `scripts/embed_backfill.py` |
+| **Web app** | FastHTML 3-pane agentic app: Forms Tree, AI chat, changes/PDF viewer | `web/app.py` |
+| **CLI** | `--list / --jurisdiction / --all / --changes / --stats / --no-ai` | `ingest/cli.py` |
 | **Ops** | Healthcheck, Dockerfile, Coolify-labelled compose, user-owned local Neo4j | `docker-compose.yaml`, `scripts/neo4j_local.sh` |
 | **Tests** | Cross-backend storage contract + no-network RAG smoke | `tests/` |
+| **Evals** | Retriever comparison harness over a ground-truth set | `evals/` |
 
-### Web routes (`taxapp.py`, port 5011)
+### Web routes (`web/app.py`, port 5011)
 
 | Route | Purpose |
 |-------|---------|
 | `/health` | Liveness probe (used by the compose healthcheck) |
 | `/login`, `/logout` | Session auth (admin seeded by `init_db`) |
-| `/` | Dashboard: jurisdictions with document counts |
-| `/jurisdiction/{code}` | Documents in a jurisdiction |
+| `/` | 3-pane app: Forms Tree + AI Assistant chat + changes newsfeed |
+| `/chat` (POST) | SSE stream from the LangGraph orchestrator (or shortcut routing) |
+| `/dashboard` | Corpus stats + jurisdictions with document counts |
+| `/jurisdictions`, `/jurisdiction/{code}` | Jurisdiction list / documents in a jurisdiction |
+| `/documents`, `/upload` | Stored-PDF browser with filters; upload a PDF to the volume |
 | `/document/{doc_id}` | Version history, changes, citations for a document |
-| `/changes` | Recent changes across all jurisdictions |
-| `/change/{change_id}` | A single change: diff + AI summary + impact |
-| `/ask` (GET/POST) | Graph-RAG Q&A over the corpus |
+| `/form/{form_id}`, `/form-pdf/{form_id}` | Form metadata + embedded PDF viewer |
+| `/changes`, `/api/feed` | Recent changes across all jurisdictions / feed partial |
+| `/help`, `/user-guide-pdf` | In-app help + the generated User Guide PDF |
+
+### Jurisdiction coverage
+
+The form catalogue (`config/tax_forms.yaml`) covers **26 jurisdictions** — the
+six live-MVP fund domiciles plus an expansion to all JTC Group office
+jurisdictions:
+
+> **Live MVP:** Jersey (JE), Guernsey (GG), Luxembourg (LU), Ireland (IE),
+> Cayman Islands (KY), British Virgin Islands (VG).
+>
+> **Expansion:** Isle of Man (IM), Mauritius (MU), Malta (MT), Cyprus (CY),
+> Netherlands (NL), Switzerland (CH), United Kingdom (GB), Germany (DE),
+> Austria (AT), Poland (PL), United States (US), Hong Kong (HK), Singapore (SG),
+> Malaysia (MY), New Zealand (NZ), United Arab Emirates (AE), Bahamas (BS),
+> Brazil (BR), South Africa (ZA), Bermuda (BM).
+
+Each form is labelled by **filing type** — `downloadable` (a PDF to complete),
+`online` (web portal / e-file), or `reference` (guidance, not a fileable form).
+Most jurisdictions file online, but a subset publishes **downloadable PDFs** —
+notably the US (IRS), Hong Kong, New Zealand, Poland, Austria, Bermuda,
+Luxembourg, and Guernsey — which TaxHub fetches and stores locally for the
+in-app PDF viewer.
+
+> The document/legislation catalogue (`config/tax_sources.yaml`) used for
+> versioning + graph-RAG currently tracks the original six MVP jurisdictions.
 
 ---
 
@@ -55,19 +95,21 @@ AuraDB). For a quick start see the top-level [`README.md`](../README.md).
 ```mermaid
 flowchart TB
     subgraph Sources["Official sources"]
-        SRC[("jerseylaw.je · gov.je · gov.gg<br/>legilux · revenue.ie · ditc.ky · bviita.vg")]
+        SRC[("Tax authorities across 26<br/>JTC Group jurisdictions<br/>(forms indexes, legislation,<br/>guidance portals)")]
     end
 
-    subgraph Ingest["Ingestion pipeline"]
-        CFG["config/tax_sources.yaml<br/>(document catalogue)"]
-        FETCH["taxfetch.py<br/>fetch + extract + hash"]
-        ORCH["scrape_tax.py<br/>orchestrator CLI"]
-        AI["taxai.py<br/>Grok summary + citations"]
+    subgraph Ingest["Ingestion (ingest/)"]
+        FCFG["config/tax_forms.yaml<br/>(26-jurisdiction form catalogue)"]
+        SCFG["config/tax_sources.yaml<br/>(document catalogue)"]
+        FORMS["ingest/forms.py<br/>form scrape + Forms Tree"]
+        FETCH["ingest/fetch.py + scrapers/<br/>fetch + extract + hash"]
+        ORCH["ingest/cli.py<br/>scraper CLI"]
+        AI["rag/llm.py<br/>Grok summary + citations"]
     end
 
     subgraph StorageLayer["Storage (backend-neutral)"]
-        BASE["storage/base.py<br/>Storage interface"]
-        SHIM["taxstore.py<br/>compat shim"]
+        BASE["storage/base.py<br/>Storage ABC"]
+        SHIM["taxstore.py<br/>compat shim → get_store()"]
         NEO["storage/neo4j_store.py"]
         SQL["storage/sqlite_store.py"]
     end
@@ -77,35 +119,46 @@ flowchart TB
         SQLITE[("SQLite / Postgres")]
     end
 
-    subgraph Serve["Serving"]
-        APP["taxapp.py<br/>FastHTML viewer + /ask"]
-        RAG["taxrag.py<br/>graph-RAG retriever + answer"]
+    subgraph Serve["Serving (web/ + agents/ + rag/)"]
+        APP["web/app.py<br/>FastHTML 3-pane app"]
+        AGENTS["agents/orchestrator.py<br/>LangGraph agent + 4 tools"]
+        RAG["rag/retrieval.py<br/>fulltext/vector/hybrid + answer()"]
+        EMB["rag/embeddings.py<br/>fastembed chunks"]
     end
 
     USER(["Back-office user"])
     GROK[["xAI Grok API"]]
 
     SRC --> FETCH
-    CFG --> ORCH
+    FCFG --> FORMS
+    SCFG --> ORCH
     ORCH --> FETCH
+    FORMS --> FETCH
     FETCH --> ORCH
     ORCH --> AI
     AI -.-> GROK
     ORCH --> SHIM
+    FORMS --> SHIM
+    EMB --> SHIM
     SHIM --> BASE
     BASE --> NEO
     BASE --> SQL
     NEO --> NEO4J
     SQL --> SQLITE
     USER --> APP
-    APP --> RAG
+    APP --> AGENTS
+    AGENTS --> RAG
+    AGENTS -.-> GROK
+    RAG --> EMB
     RAG --> SHIM
     RAG -.-> GROK
     APP --> SHIM
 ```
 
 `DATA_STORAGE` selects exactly one backend at runtime; both implement the same
-`Storage` interface, so no caller (app, CLI, RAG) knows which database is live.
+`Storage` interface, so no caller (app, agents, retrieval, CLI) knows which
+database is live. The top-level `taxstore.py` is a thin compat shim that
+re-exports the active store from `storage.get_store()`.
 
 ---
 
@@ -115,10 +168,10 @@ How one document moves from source to a stored, diffed, AI-summarised version:
 
 ```mermaid
 sequenceDiagram
-    participant CLI as scrape_tax.py
-    participant F as taxfetch.py
+    participant CLI as ingest/cli.py
+    participant F as ingest/fetch.py
     participant S as Storage backend
-    participant AI as taxai.py (Grok)
+    participant AI as rag/llm.py (Grok)
 
     CLI->>S: start_run(jurisdiction)
     CLI->>F: fetch(url, mode=http|browser)
@@ -151,59 +204,88 @@ changed. A change row is written only on an actual content-hash difference.
 ```mermaid
 graph LR
     J["(:Jurisdiction)<br/>code, name, region, authority"]
-    D["(:Document)<br/>id, doc_key, title, reference, url"]
-    V["(:Version)<br/>id, version_no, content_hash, text"]
-    C["(:Change)<br/>id, change_type, diff, ai_summary, ai_impact"]
+    D["(:Document)<br/>uid, doc_key, title, reference, url"]
+    V["(:Version)<br/>uid, version_no, content_hash, text"]
+    C["(:Change)<br/>uid, change_type, diff, ai_summary, ai_impact"]
     I["(:Instrument)<br/>key, name"]
+    CH["(:Chunk)<br/>ord, chunk_text, embedding"]
+    F["(:Form)<br/>uid, form_key, title, filing_type, file_path"]
 
     J -- HAS_DOCUMENT --> D
+    J -- HAS_FORM --> F
     D -- HAS_VERSION --> V
     D -- CURRENT_VERSION --> V
     D -- HAS_CHANGE --> C
     C -- FROM_VERSION --> V
     C -- TO_VERSION --> V
-    V -- "CITES {locator}" --> I
+    V -- "CITES {locator, snippet}" --> I
+    V -- HAS_CHUNK --> CH
 ```
 
 Design notes:
 
-- **Stable integer ids** are minted from a `(:Counter)` node, so `/document/{id}`
-  URLs work identically across backends and the deprecated `id()` function is
-  avoided — portable straight to AuraDB.
+- **Stable integer ids** (`uid`) are minted from a `(:Counter)` node, so
+  `/document/{id}` and `/form/{id}` URLs work identically across backends and
+  the deprecated `id()` function is avoided — portable straight to AuraDB.
 - **Citations are first-class edges** (`(:Version)-[:CITES]->(:Instrument)`),
   which is exactly what graph-RAG traverses.
+- **Forms are first-class nodes** (`(:Jurisdiction)-[:HAS_FORM]->(:Form)`),
+  classified by category + form_type to build the Forms Tree, and distinct from
+  legislation/guidance `Document` nodes.
+- **Chunk vectors** (`(:Version)-[:HAS_CHUNK]->(:Chunk)`) carry per-passage
+  embeddings for vector/hybrid retrieval, backed by a Neo4j native `VECTOR INDEX`
+  (cosine).
 - **Null properties are re-materialised** on read (Neo4j omits null keys; the app
   expects every column present) so the two backends are behaviourally identical.
 - **Version-tolerant DDL**: `init_db` tries 5.x syntax (`REQUIRE`,
-  `CREATE FULLTEXT INDEX`) and falls back to 4.x (`ASSERT`, fulltext procedure),
-  so the same code runs on local Neo4j 4.x and AuraDB 5.x.
+  `CREATE FULLTEXT INDEX`) and falls back to 4.x (`ASSERT`, `db.index.fulltext`
+  procedure), so the same code runs on local Neo4j 4.x and AuraDB 5.x.
 
 The relational backend stores the same shape as tables: `jurisdictions`,
 `tax_documents`, `document_versions`, `document_changes`, `citations`,
-`scrape_runs`, `users`.
+`version_chunks`, `tax_forms`, `scrape_runs`, `users`, plus chat history
+(`chat_sessions`, `chat_messages`).
 
 ---
 
-## 5. Graph-RAG — "Ask the law"
+## 5. Agents + Graph-RAG — the assistant
+
+The web app's chat routes every message to a **LangGraph tool-calling
+orchestrator** (`agents/orchestrator.py`, `create_react_agent`). The
+orchestrator picks the right specialist agent — exposed as the four tools in
+`agents/tools.py` — and streams tokens and tool steps back over SSE:
+
+| Tool | Job |
+|------|-----|
+| `document_agent` | Find the correct tax FORM(s) for a need (the primary use case) |
+| `law_agent` | Tax-LAW Q&A via graph-RAG over the tracked corpus, with citations |
+| `metadata_agent` | Structured lookup: forms / deadlines for a jurisdiction or category |
+| `changes_agent` | Recent changes to tracked documents |
+
+`law_agent` delegates to graph-RAG retrieval:
 
 ```mermaid
 flowchart LR
-    Q(["Question"]) --> R1
-    subgraph Retrieve["taxrag.GraphFullTextRetriever"]
-        R1["1. Full-text seed<br/>Neo4j Lucene / SQLite scan"]
-        R2["2. Graph expansion<br/>cited instruments + latest change"]
-        R1 --> R2
+    Q(["Question"]) --> SEED
+    subgraph Retrieve["rag.retrieval — fulltext / vector / hybrid"]
+        SEED["1. Seed<br/>full-text (Neo4j Lucene / SQLite scan)<br/>and/or vector (fastembed chunks)<br/>fused by reciprocal-rank (hybrid)"]
+        EXP["2. Graph expansion<br/>cited instruments + latest change"]
+        SEED --> EXP
     end
-    R2 --> CTX["Numbered, grounded context blocks"]
-    CTX --> GEN["taxrag.answer()<br/>Grok generation"]
+    EXP --> CTX["Numbered, grounded context blocks"]
+    CTX --> GEN["rag.retrieval.answer()<br/>Grok generation"]
     GEN --> A(["Answer + cited sources"])
     GEN -. "no XAI_API_KEY" .-> DEG["Degrade: return sources only"]
 ```
 
 Retrieval and generation are **deliberately separated** (`Retriever` ABC +
-`answer()`), so a `VectorRetriever` can be dropped in later without touching
-answer generation. **Embeddings are deferred** — today retrieval is full-text +
-graph traversal, not vectors.
+`answer()`). Three retrievers implement the ABC — `GraphFullTextRetriever`,
+`VectorRetriever`, and `HybridRetriever` — selected by `RAG_RETRIEVER` (default
+`hybrid`). **Embeddings are local fastembed** (`BAAI/bge-small-en-v1.5`, 384-dim;
+`rag/embeddings.py`), chunked per passage and stored as `(:Chunk)` nodes /
+`version_chunks` rows. Vector and hybrid retrievers **degrade to full-text**
+when no embeddings/chunks are present, so the assistant works with or without a
+backfill (`scripts/embed_backfill.py`).
 
 ---
 
@@ -223,9 +305,14 @@ Copy `.env.example` → `.env` (gitignored). All variables:
 | `XAI_BASE_URL` | no | `https://api.x.ai/v1` | OpenAI-compatible base URL |
 | `GROK_MODEL` | no | `grok-4-1-fast-reasoning` | Model id |
 | `LLM_PROVIDER` | no | `xai` | Provider selector |
-| `ADMIN_EMAIL` | yes | `admin@jtgroup.com` | Seeded admin login |
-| `ADMIN_PASSWORD` | yes | — | Seeded admin password |
-| `APP_SECRET` | yes (prod) | — | Session signing secret |
+| `RAG_RETRIEVER` | no | `hybrid` | Retriever: `hybrid`, `vector`, or `fulltext` |
+| `EMBEDDINGS` | no | `fastembed` | Embedding provider: `fastembed` or `openai` |
+| `EMBED_MODEL` | no | `BAAI/bge-small-en-v1.5` | Embedding model id |
+| `EMBED_DIM` | no | `384` | Embedding dimensions (must match the model) |
+| `ADMIN_EMAIL` | yes | `admin@example.com` | Seeded admin login |
+| `ADMIN_PASSWORD` | yes | _(set in env)_ | Seeded admin password (set a strong value in prod) |
+| `APP_SECRET` | yes (prod) | _(set in env)_ | Session signing secret (set a random value in prod) |
+| `TAXHUB_PUBLIC` | no | `0` | `1` disables login (public/demo mode) |
 | `PORT` | no | `5011` | Web app port |
 
 ---
@@ -334,14 +421,16 @@ Ordered by leverage:
 2. **Schedule the scraper** (daily/weekly cron) so change history accrues — the
    product's core value is the *change* trail, which only exists once scrapes run
    repeatedly.
-3. **Vector embeddings** — add a `VectorRetriever` behind the existing `Retriever`
-   ABC (AuraDB has native vector indexes). Upgrades `/ask` from full-text to
-   semantic with no change to `answer()`.
+3. **Backfill embeddings at scale** — `VectorRetriever`/`HybridRetriever` and
+   `scripts/embed_backfill.py` already exist (AuraDB native vector index, local
+   fastembed). Run the backfill across the full corpus so `/chat` law answers are
+   semantic-by-default rather than degrading to full-text.
 4. **Change digest / alerts** — email or in-app digest of recent changes per
    jurisdiction (the "back-office alert" use case).
-5. **Harden gated sources** — `guernseylegalresources.gg` (Cloudflare) still
-   under-fetches; revisit fetch strategy.
-6. **Clean up leftover carhero scaffold** — `db.py`, `main.py`, `agents/`, old
-   tests are unused by the TaxHub pipeline.
+5. **Harden gated sources** — JS/UA-gated authority sites (e.g. Jersey, Guernsey)
+   still under-fetch some forms; revisit the browser fetch strategy.
+6. **Broaden the document/legislation catalogue** — `config/tax_sources.yaml`
+   tracks only the six MVP jurisdictions for versioning + graph-RAG; extend it
+   toward the 26 jurisdictions already in the form catalogue.
 7. **Auth & multi-user** — move beyond the single seeded admin if more than the
    back-office team needs access.
