@@ -25,10 +25,10 @@ def document_agent(need: str) -> str:
     lines = ["Matching tax forms:"]
     for f in forms:
         lines.append(
-            f"- **{f['title']}** ({f['jurisdiction_code']}, {f.get('category','')}/"
-            f"{f.get('form_type','')}) [form:{f['id']}]\n"
-            f"  Who files: {f.get('who_files','—')}. Deadline: {f.get('deadline','—')}. "
-            f"Frequency: {f.get('frequency','—')}.")
+            f"- **{f['title']}** ({f['jurisdiction_code']}, {f.get('category') or '—'}/"
+            f"{f.get('form_type') or 'form'}) [form:{f['id']}]\n"
+            f"  Who files: {f.get('who_files') or '—'}. Deadline: {f.get('deadline') or '—'}. "
+            f"Frequency: {f.get('frequency') or '—'}.")
     return "\n".join(lines)
 
 
@@ -57,8 +57,8 @@ def metadata_agent(jurisdiction_code: str = "", category: str = "") -> str:
     if not forms:
         return "No forms found for that filter."
     return "\n".join(
-        f"- {f['jurisdiction_code']} · {f.get('category','')} · {f['title']} "
-        f"(due {f.get('deadline','—')}) [form:{f['id']}]" for f in forms)
+        f"- {f['jurisdiction_code']} · {f.get('category') or '—'} · {f['title']} "
+        f"(due {f.get('deadline') or '—'}) [form:{f['id']}]" for f in forms)
 
 
 @tool
