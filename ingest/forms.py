@@ -76,7 +76,7 @@ def scrape_forms(jurisdiction: str | None = None, download: bool = True,
             icat = jur.get("index_category", "other")
             itype = jur.get("index_form_type", "form")
             groups: dict[str, dict] = {}
-            for link in scraper.discover(jur["forms_index"], match=".pdf"):
+            for link in scraper.discover(jur["forms_index"], match=jur.get("index_match", ".pdf")):
                 title = (link.get("text") or link["url"].rsplit("/", 1)[-1]).strip()
                 years = re.findall(r"20\d{2}", title + " " + link["url"])
                 yr = max((int(y) for y in years), default=0)

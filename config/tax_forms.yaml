@@ -51,6 +51,7 @@ jurisdictions:
     forms_index: https://www.gov.gg/revenue-service/income-tax-forms
     index_category: corporate_tax
     index_form_type: form
+    index_match: CHttpHandler          # gov.gg serves PDFs via CHttpHandler.ashx?id=N
     forms:
       - form_key: company_income_tax_return
         title: Company Income Tax Return (Guernsey)
