@@ -5,8 +5,9 @@ markdown (tables + toc + fenced code) -> JTC-branded HTML -> WeasyPrint PDF.
 The `[TOC]` marker becomes a navigable, anchor-linked table of contents, and
 WeasyPrint also emits PDF bookmarks from the headings.
 
-Mermaid code blocks don't render as diagrams in WeasyPrint — they fall back to
-fenced code blocks, which is fine for a printable architecture reference.
+Mermaid diagrams are pre-rendered to PNGs with headless Chromium (shared with
+``generate_architecture_html.py``) and inlined as base64, so the printed PDF
+shows the real architecture diagram — not a fenced code block.
 """
 from __future__ import annotations
 
@@ -48,13 +49,34 @@ img { max-width: 100%; border: 1px solid #e6e3ec; border-radius: 6px; margin: 10
 .toc ul { list-style: none; padding-left: 14px; margin: 4px 0; }
 .toc > ul { padding-left: 0; }
 .toc a { color: #6b1766; }
+figure { margin: 14px 0; text-align: center; page-break-inside: avoid; }
+figure img { max-width: 100%; }
+figcaption { color: #9a93a6; font-size: 8.5pt; margin-top: 5px; }
 """
 
 
 def main() -> None:
+    import base64
+    from generate_architecture_html import extract_mermaid, render_diagrams
+
     md_text = MD.read_text()
+    # Render the mermaid diagrams to PNGs (headless Chromium) and inline them, so
+    # the PDF shows real diagrams instead of mermaid code blocks.
+    text, sources = extract_mermaid(md_text)
+    print(f"Found {len(sources)} mermaid diagram(s); rendering…")
+    pngs = render_diagrams(sources) if sources else []
+
     html_body = markdown.markdown(
-        md_text, extensions=["tables", "toc", "fenced_code", "attr_list"])
+        text, extensions=["tables", "toc", "fenced_code", "attr_list"])
+
+    captions = {0: "TaxHub on Azure — target production architecture"}
+    for i, png in enumerate(pngs):
+        b64 = base64.b64encode(png).decode()
+        cap = captions.get(i, "")
+        fig = (f'<figure><img alt="diagram {i}" src="data:image/png;base64,{b64}">'
+               + (f'<figcaption>{cap}</figcaption>' if cap else "") + "</figure>")
+        html_body = html_body.replace(f"<p>MERMAIDIMG{i}</p>", fig)
+
     html = (f"<html><head><meta charset='utf-8'><style>{CSS}</style></head>"
             f"<body>{html_body}</body></html>")
     HTML(string=html, base_url=str(MD.parent)).write_pdf(str(PDF))
