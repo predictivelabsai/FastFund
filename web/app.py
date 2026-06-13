@@ -344,6 +344,7 @@ def left_pane(sess):
             A("Entities", href="/entities", cls="navlink"),
             A("Obligations", href="/obligations", cls="navlink"),
             A("📅 Calendar", href="/calendar", cls="navlink"),
+            A("🗺 Coverage", href="/coverage", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
@@ -1228,6 +1229,90 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
                   Th("Status"), Th("Rule")), *rows)
          if rows else P("No obligations match.", cls="muted")),
         title="Calendar · TaxHub")
+
+
+@rt("/coverage")
+def coverage_view(sess):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    from web import coverage as cov
+    pf = cov.portfolio_matrix(store, OB_STATUS)
+    cat = cov.catalogue_matrix(store)
+
+    # ── Portfolio lens payload (entity × status) ────────────────────────────
+    p_rows = pf["rows"]
+    p_y = [r["name"] for r in p_rows]
+    p_x = [OB_STATUS_LABELS[s] for s in OB_STATUS]
+    p_z = [[r["counts"].get(s, 0) for s in OB_STATUS] for r in p_rows]
+    p_text = [[str(v) if v else "" for v in row] for row in p_z]
+    p_payload = {"x": p_x, "y": p_y, "z": p_z, "text": p_text}
+
+    # ── Catalogue lens payload (jurisdiction × category) ────────────────────
+    c_y = [JUR_NAMES.get(j, j) for j in cat["jurs"]]
+    c_x = [CATEGORY_LABELS.get(c, c) for c in cat["cats"]]
+    c_z = cat["count"]
+    c_text = [[str(v) if v else "" for v in row] for row in c_z]
+    # Hover: filing-type breakdown per cell.
+    c_hover = [["📄 %d · 🌐 %d · 📘 %d" % (cat["dl"][j][c], cat["on"][j][c], cat["ref"][j][c])
+                for c in range(len(cat["cats"]))] for j in range(len(cat["jurs"]))]
+    c_payload = {"x": c_x, "y": c_y, "z": c_z, "text": c_text, "hover": c_hover}
+
+    t = cat["totals"]
+    summary = Div(
+        Div(Span(f"{pf['pct']}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" of the book filed / confirmed", style="color:var(--muted)"),
+            Div(P(A(f"{pf['filed']} of {pf['total']} obligations", href="/obligations?status=filed"),
+                  " across ", A(f"{len(p_rows)} entities", href="/entities"),
+                  style="color:var(--muted);font-size:13px;margin:4px 0 0")),
+            style="flex:1;min-width:240px"),
+        Div(Span(f"{t['forms']}", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" forms in the catalogue", style="color:var(--muted)"),
+            Div(P(f"{t['jurisdictions']} jurisdictions · 📄 {t['downloadable']} downloadable · "
+                  f"🌐 {t['online']} online · 📘 {t['reference']} reference",
+                  style="color:var(--muted);font-size:13px;margin:4px 0 0")),
+            style="flex:1;min-width:240px"),
+        style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px")
+
+    data_script = Script(f"window.PFCOV={_json.dumps(p_payload)};"
+                         f"window.CATCOV={_json.dumps(c_payload)};")
+    plot_js = Script("""
+function heat(id, d, opts){
+  var trace={type:'heatmap',x:d.x,y:d.y,z:d.z,xgap:2,ygap:2,
+    text:d.text,texttemplate:'%{text}',textfont:{size:12,color:'#2b2b30'},
+    colorscale:opts.scale,showscale:false,zmin:0,
+    hoverongaps:false};
+  if(d.hover){trace.customdata=d.hover;
+    trace.hovertemplate='%{y} · %{x}<br>%{z} form(s)<br>%{customdata}<extra></extra>';}
+  else{trace.hovertemplate='%{y} · %{x}<br>%{z} obligation(s)<extra></extra>';}
+  var h=Math.max(160, d.y.length*30+90);
+  Plotly.react(id,[trace],{margin:{l:170,r:10,t:10,b:70},height:h,
+    xaxis:{side:'top',tickangle:-25,automargin:true,fixedrange:true},
+    yaxis:{automargin:true,autorange:'reversed',fixedrange:true}},
+    {responsive:true,displayModeBar:false});
+}
+var PUR=[[0,'#faf7fb'],[0.5,'#d3a9d0'],[1,'#6b1766']];
+var GRN=[[0,'#f5faf6'],[0.5,'#9fcfb0'],[1,'#1c7c44']];
+heat('pfcov', window.PFCOV, {scale:PUR});
+heat('catcov', window.CATCOV, {scale:GRN});
+window.addEventListener('resize',function(){if(window.Plotly){
+  Plotly.Plots.resize('pfcov');Plotly.Plots.resize('catcov');}});
+""")
+    return Page(
+        H1("Coverage map"),
+        P("Two lenses on coverage: how much of the client book is filed, and how "
+          "thick our form catalogue is across jurisdictions and categories.", cls="muted"),
+        summary,
+        H2("Portfolio coverage", style="margin-top:18px"),
+        P("Each entity's obligations by file-status — darker = more obligations in "
+          "that state. Filed/Confirmed columns are the compliant book.", cls="muted"),
+        (Div(id="pfcov") if p_rows else P("No entities yet.", cls="muted")),
+        H2("Catalogue coverage", style="margin-top:22px"),
+        P("Forms held per jurisdiction × category. Hover a cell for the filing-type "
+          "breakdown (📄 downloadable · 🌐 online · 📘 reference).", cls="muted"),
+        (Div(id="catcov") if cat["jurs"] else P("No forms yet.", cls="muted")),
+        data_script, plot_js, PLOTLY,
+        title="Coverage · TaxHub")
 
 
 @rt("/admin/digest")

@@ -108,7 +108,13 @@ dates. Two layers, Sphere-style:
      alert foundation; Dashboard "Deadlines" panel; per-entity "Due" column.
    - *Remaining for a later pass:* scheduled email/Slack send + joining law-change
      events to entity jurisdictions (the digest data is already assembled).
-5. **Coverage Map** — `/coverage` visual (jurisdiction + portfolio lenses).
+5. **Coverage Map** — `/coverage` visual (jurisdiction + portfolio lenses). ✅ DONE
+   - `web/coverage.py`: `portfolio_matrix` (entity × file-status grid + headline
+     "% filed/confirmed") and `catalogue_matrix` (jurisdiction × category form
+     counts + filing-type breakdown). Pure data assembly.
+   - `/coverage`: two Plotly heatmaps (portfolio purple, catalogue green) + a
+     summary header (book % filed, catalogue totals by filing type). Cells link
+     out / hover to the filing-type split.
 6. **entity_agent** for Copilot/Assistant + expert-verified badges across answers.
 
 Each phase is independently shippable and deploys via the existing pipeline.
