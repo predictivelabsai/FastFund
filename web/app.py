@@ -239,6 +239,8 @@ def _run_refresh(jurisdiction):
             _REFRESH["log"].append(
                 f"{c}: recorded={r['recorded']} downloaded={r['downloaded']} "
                 f"portal={r['portal']} failed={r['failed_downloads']}")
+        prov = store.build_provenance_edges()        # keep IMPLEMENTS edges fresh
+        _REFRESH["log"].append(f"provenance: {prov}")
         _REFRESH["summary"] = agg
     except Exception as e:  # noqa: BLE001
         _REFRESH["log"].append(f"ERROR: {e!r}")
@@ -263,6 +265,15 @@ def refresh_status(sess, request):
     if not _admin_ok(sess, request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     return JSONResponse(_REFRESH)
+
+
+@rt("/admin/build-provenance", methods=["POST"])
+def build_provenance(sess, request):
+    """One-shot: persist Form.legislation_ref → (:Form)-[:IMPLEMENTS]->(:Legislation)
+    edges (+ SOURCED_FROM to tracked Documents). Idempotent."""
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(store.build_provenance_edges())
 
 
 # ── 3-pane components ───────────────────────────────────────────────────────

@@ -642,6 +642,20 @@ class SqliteStore(Storage):
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]
 
+    def build_provenance_edges(self) -> dict:
+        # Relational backend: provenance is the tax_forms.legislation_ref column;
+        # there are no separate edge rows to materialise. Report counts so the
+        # call is meaningful and parity with the graph backend is observable.
+        with self.conn() as c:
+            refs = [r[0] for r in c.execute(text(
+                "SELECT legislation_ref FROM tax_forms "
+                "WHERE coalesce(legislation_ref,'')<>''")).all()]
+            doc_urls = {r[0] for r in c.execute(text(
+                "SELECT url FROM tax_documents WHERE coalesce(url,'')<>''")).all()}
+        laws = set(refs)
+        return {"legislation_nodes": len(laws), "implements_edges": len(refs),
+                "sourced_from_edges": len(laws & doc_urls), "backend": "sqlite-derived"}
+
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
         now = utcnow()

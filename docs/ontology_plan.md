@@ -10,9 +10,13 @@
 >   `/ontology` (`web/ontology.py`), with a **Provenance** view and a **Schema**
 >   view. The IMPLEMENTS edges are derived **in-memory** from each form's
 >   `legislation_ref` (NetworkX builds the graph + degree-sizing; vis-network
->   renders it), so no schema migration was needed. **Still future (phase 4):**
->   persisting those edges as real `(:Form)-[:IMPLEMENTS]->(:Document)` in Neo4j
->   so Cypher/graph-RAG can traverse them too.
+>   renders it), so no schema migration was needed.
+> - **Phase 4 — DONE:** provenance is now also **persisted** in Neo4j as real
+>   `(:Form)-[:IMPLEMENTS]->(:Legislation {url,label})` edges, with
+>   `(:Legislation)-[:SOURCED_FROM]->(:Document)` where a tracked law/guidance
+>   Document shares the URL — so Cypher and graph-RAG can traverse Form → law →
+>   tracked text. Built by `store.build_provenance_edges()` (idempotent MERGE),
+>   run after every catalogue refresh and triggerable via `POST /admin/build-provenance`.
 
 
 A new left-menu item **Ontology** that renders an interactive **NetworkX graph**

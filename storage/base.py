@@ -24,6 +24,20 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def legislation_label(url: str) -> str:
+    """Short human label for a legislation URL (host + last path segment).
+    Shared by the provenance edge builder and the Ontology view."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url or "")
+        host = (u.netloc or "").replace("www.", "")
+        tail = [p for p in (u.path or "").split("/") if p]
+        last = tail[-1].rsplit(".", 1)[0][:40] if tail else ""
+        return f"{host}/{last}" if last else host or (url or "")[:48]
+    except Exception:  # noqa: BLE001
+        return (url or "")[:48]
+
+
 class Storage(abc.ABC):
     """Backend-neutral persistence + read API for TaxHub.
 
@@ -227,6 +241,14 @@ class Storage(abc.ABC):
     @abc.abstractmethod
     def search_forms(self, query: str, limit: int = 10) -> list[dict]:
         """Keyword search over form title/category/type for the form-finder."""
+
+    @abc.abstractmethod
+    def build_provenance_edges(self) -> dict:
+        """Persist provenance from each Form's ``legislation_ref`` string into
+        real graph edges: ``(:Form)-[:IMPLEMENTS]->(:Legislation {url,label})``,
+        and ``(:Legislation)-[:SOURCED_FROM]->(:Document)`` where a tracked
+        legislation/guidance Document shares the URL — so Cypher and graph-RAG
+        can traverse Form → law → tracked text. Idempotent. Returns counts."""
 
     # ── Chat history (assistant sessions) ──────────────────────────────────
     @abc.abstractmethod

@@ -574,6 +574,30 @@ class Neo4jStore(Storage):
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]
 
+    def build_provenance_edges(self) -> dict:
+        from .base import legislation_label
+        with self._session() as s:
+            pairs = [{"uid": r["uid"], "url": r["ref"],
+                      "label": legislation_label(r["ref"])}
+                     for r in s.run(
+                         "MATCH (f:Form) WHERE coalesce(f.legislation_ref,'')<>'' "
+                         "RETURN f.uid AS uid, f.legislation_ref AS ref").data()]
+            if pairs:
+                s.run(
+                    "UNWIND $pairs AS p "
+                    "MERGE (l:Legislation {url:p.url}) "
+                    "  ON CREATE SET l.label=p.label "
+                    "WITH p,l MATCH (f:Form {uid:p.uid}) "
+                    "MERGE (f)-[:IMPLEMENTS]->(l)", pairs=pairs)
+            sourced = s.run(
+                "MATCH (l:Legislation),(d:Document) WHERE d.url=l.url "
+                "MERGE (l)-[:SOURCED_FROM]->(d) RETURN count(*) AS c").single()["c"]
+            nleg = s.run("MATCH (l:Legislation) RETURN count(l) AS c").single()["c"]
+            nimpl = s.run("MATCH (:Form)-[r:IMPLEMENTS]->() "
+                          "RETURN count(r) AS c").single()["c"]
+        return {"legislation_nodes": nleg, "implements_edges": nimpl,
+                "sourced_from_edges": sourced}
+
     # ── Chat history ───────────────────────────────────────────────────────
     def create_chat_session(self, user_email: str, title: str = "") -> int:
         with self._session() as s:
