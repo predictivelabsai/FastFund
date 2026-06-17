@@ -115,4 +115,17 @@ def benchmark_agent(topic: str = "") -> str:
     return "\n".join(f"- {b['text']}" for b in bench)
 
 
-ALL_TOOLS = [profile_agent, needs_agent, services_agent, recommend_agent, benchmark_agent]
+@tool
+def data_agent(question: str) -> str:
+    """Answer a QUANTITATIVE question about the whole book via text-to-SQL over the
+    SFO Hub database. Use for counts, totals, averages, rankings and aggregates
+    across all clients — e.g. "how many family offices have AUM over $1bn",
+    "total pipeline value", "which service is recommended most", "average private
+    equity allocation", "how many clients vs leads". For a single named family use
+    profile_agent instead."""
+    from rag.text2sql import ask_data
+    return ask_data(question)
+
+
+ALL_TOOLS = [profile_agent, needs_agent, services_agent, recommend_agent,
+             benchmark_agent, data_agent]

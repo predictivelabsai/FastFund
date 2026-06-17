@@ -228,3 +228,8 @@ data/uploads/
 
 # Deployment credentials (never commit)
 .secrets/
+
+# Eval artifacts
+evals/eval-results-*.csv
+evals/eval-comparison-*.csv
+.deepeval*

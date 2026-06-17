@@ -1,0 +1,4 @@
+# Eval-only dependencies (NOT installed in the production image).
+# Run locally:  pip install -r evals/requirements.txt
+deepeval>=1.4.0
+openai>=1.40.0
