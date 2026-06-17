@@ -1,155 +1,121 @@
-# JTC TaxHub — User Guide
+# TaxHub — User Guide
 
-**TaxHub** · Tax-form finder & traceability for the fund back office
-**Version 2 · June 2026 · Confidential — Internal Use Only**
-Deployed at **taxhub.predictivelabs.ai**
+Tax-law traceability & filing intelligence for fund back-office: ask in plain English and every answer cites the source law. A slide version is at [`taxhub_user_guide.pdf`](taxhub_user_guide.pdf).
 
----
+## The Assistant workspace
 
-[TOC]
+![The Assistant workspace](screenshots/ug-01-assistant.png)
 
----
+- Three panes: navigation + forms tree + shortcuts (left), the AI assistant (centre), and a live regulatory-changes feed (right).
+- Ask in plain English — it routes to the right specialist agent (form-finder, tax-law, changes, free search) and answers with citations.
+- Suggestion chips and `shortcut:` prefixes get you started fast.
 
-## 1. Overview
+## Compliance dashboard
 
-TaxHub helps a fund-management back office answer one question fast: **"which tax
-form do I need to file, and where?"** — and then traces that form back to the
-**underlying legislation**.
+![Compliance dashboard](screenshots/ug-02-dashboard.png)
 
-![TaxHub — 3-pane app: Forms Tree, AI Assistant, and the form/PDF viewer](screenshots/ug-02-form-viewer.png)
+- The whole book at a glance: obligations across all entities, how many are filed, and how many await expert sign-off.
+- An overdue / due-soon digest surfaces what needs attention now.
+- Every figure links straight through to the underlying list.
 
-It combines three things:
+## Entities portfolio
 
-- A **form-finder corpus** — tax forms scraped from official revenue authorities
-  across JTC's fund domiciles, classified by jurisdiction, category and filing type.
-- An **AI Assistant** — a LangGraph orchestrator (xAI Grok) that routes your
-  question to the right specialist agent and answers with cited sources.
-- A **legislation/provenance layer** — the primary law each form implements, kept
-  as links so answers are traceable, not just plausible.
+![Entities portfolio](screenshots/ug-03-entities.png)
 
----
+- Every fund, SPV, GP, trust and holdco you administer in one table — type, domicile, jurisdictions, financial year-end and filing ratio.
+- Add an entity inline, or bulk-import the portfolio from CSV.
+- Each entity's obligations and deadlines build on this record.
 
-## 2. What it does
+## Entity profile
 
-- **Finds the right form** for a described need (e.g. *"Cayman economic substance
-  notification"*) and opens it in the viewer.
-- **Answers tax-law questions** (e.g. *"what does CIGA mean?"*) with citations to
-  the tracked legislation/guidance corpus.
-- **Tracks changes** — every tracked document is versioned; amendments get a
-  plain-English AI summary.
-- **Stores and serves PDFs** — forms are stored on the server and viewable inline;
-  online-filed forms link out to the official portal.
+![Entity profile](screenshots/ug-04-entity-detail.png)
 
----
+- A single entity's full picture — domicile, jurisdictions, year-end and client reference.
+- Its complete obligation register with filing status and deadlines.
+- The starting point the Assistant reasons over for entity questions.
 
-## 3. Filing types
+## Obligations register
 
-The most important label on every form is **how it is filed**:
+![Obligations register](screenshots/ug-05-obligations.png)
 
-| Filing type | Meaning |
-|-------------|---------|
-| 📄 **Downloadable form** | A PDF you complete and submit. |
-| 🌐 **Online filing** | Filed via a web portal / e-file — there is no PDF to complete; the record links to the portal. |
-| 📘 **Reference / guidance** | A user guide or guidance note — *not* a fileable form. |
+- Every filing obligation across the book — entity, jurisdiction, type, deadline and status.
+- Track what's filed, confirmed, or still awaiting expert sign-off.
+- Filter to economic-substance, CRS/FATCA, returns and more.
 
-This distinction is shown in the Assistant's answers, on each form's detail panel,
-and as a filter in the Documents browser.
+## Filing calendar
 
----
+![Filing calendar](screenshots/ug-06-calendar.png)
 
-## 4. Coverage audit — what each authority actually offers
+- All deadlines on one timeline, urgency-coded: overdue, due soon, upcoming.
+- Filter by entity, jurisdiction or obligation type.
+- Resolves real due-dates from each entity's year-end and the rules.
 
-Not every jurisdiction publishes downloadable forms; several require online
-filing and publish only guidance. TaxHub captures this honestly:
+## Coverage map
 
-| Jurisdiction | How you actually file | What the site offers | filing_type |
-|--------------|-----------------------|----------------------|-------------|
-| **Luxembourg** (ACD) | Complete & submit PDF | 126 real fillable forms (200/300/500/710…) | downloadable |
-| **Guernsey** (gov.gg) | PDF forms (main return online) | 71 real forms (registration, tax-cap returns…) | downloadable |
-| **Jersey** (Revenue Jersey) | Online portal | No downloadable form | online |
-| **Ireland** (Revenue) | ROS e-file | PDFs are TDM guidance, not forms | online + reference |
-| **Cayman** (DITC) | DITC portal | PDFs are user guides | online + reference |
-| **BVI** (ITA) | BOSS portal (via agent) | PDFs are guidance/methodology | online + reference |
+![Coverage map](screenshots/ug-07-coverage.png)
 
----
+- A jurisdiction × obligation grid showing filed / confirmed coverage at a glance.
+- Spot gaps — where an obligation exists but nothing has been filed yet.
+- Drill from any cell into the obligations behind it.
 
-## 5. Using the AI Assistant
+## Jurisdictions
 
-![AI Assistant with suggestion cards](screenshots/ug-01-assistant.png)
+![Jurisdictions](screenshots/ug-08-jurisdictions.png)
 
-The centre pane is a streaming chat. Ask in plain English; the **orchestrator**
-routes to a specialist agent and streams the answer with the agent shown working:
+- The jurisdictions you operate in, each with its filing requirements.
+- Open one to see the obligations, forms and source law that apply.
+- Backed by a live-scraped corpus across 26 jurisdictions.
 
-- **DocumentAgent** — finds the correct tax form(s) for a need.
-- **LawAgent** — answers tax-law questions over the legislation corpus (graph-RAG).
-- **MetadataAgent** — lists forms / deadlines for a jurisdiction or category.
-- **ChangesAgent** — reports recent changes to tracked documents.
+## Document library
 
-Answers keep `[form:N]` / `[doc:N]` markers — click them to open the form PDF or
-source document in the right pane. **Suggestion cards** under the input offer
-starting points.
+![Document library](screenshots/ug-09-documents.png)
 
----
+- Every source document — acts, guidance notes, circulars and forms.
+- Full-text searchable; each is the provenance behind an answer.
+- Open a document to read it with its version history.
 
-## 6. Shortcuts
+## Regulatory changes
 
-Type a prefix in the chat box to go straight to a capability:
+![Regulatory changes](screenshots/ug-10-changes.png)
 
-| Shortcut | Does |
-|----------|------|
-| `form:` | Find the right tax form for a need |
-| `law:` | Ask a tax-law question (graph-RAG) |
-| `forms:` | List forms for a jurisdiction (e.g. `forms: KY`) |
-| `changes:` | Recent changes (optionally by jurisdiction) |
-| `find:` | Free search of the corpus |
+- A running feed of what changed in the law, newest first, by jurisdiction.
+- Each change links to the document version that introduced it.
+- The same feed powers the `changes:` shortcut in the Assistant.
 
----
+## Document hierarchy
 
-## 7. The Forms Tree
+![Document hierarchy](screenshots/ug-11-document-hierarchy.png)
 
-The left pane shows a navigable taxonomy:
+- A tree view of the corpus: jurisdiction → document → version.
+- See how the law is structured before you dive into the text.
+- Click through to any document in context.
 
-**Jurisdiction → category → document type → form**
+## Ontology graph
 
-Categories include corporate tax, economic substance, AEOI (FATCA/CRS),
-beneficial ownership, partnerships, and fund-specific. Drill down and click a
-form to open it.
+![Ontology graph](screenshots/ug-12-ontology.png)
 
----
+- A force-directed graph of how forms trace back to the law (283 forms, 39 laws linked).
+- Toggle between the Provenance view and the Schema view.
+- Click a form to open it, or a legislation node to open the source law.
 
-## 8. Documents & upload
+## Cited tax-law answers
 
-![Documents browser with search and filing-type filters](screenshots/ug-03-documents.png)
+![Cited tax-law answers](screenshots/ug-13-assistant-answer.png)
 
-The **Documents** page lists every stored-PDF document with **search and
-jurisdiction / category / filing-type filters**. It also has an **upload form**:
-drop a PDF, set jurisdiction + category, and it is pushed to the server volume
-and registered — useful for adding forms without server access.
+- Ask a tax-law question and the Assistant answers from the corpus — never from thin air.
+- Every claim carries a numbered citation, with open-doc links to the source.
+- Here: 'what does CIGA mean?' → Core Income Generating Activities, sourced.
 
-Clicking a document opens it in the PDF viewer (right pane); online-filed forms
-link to the official portal instead.
+## Form finder
 
----
+![Form finder](screenshots/ug-14-form-finder.png)
 
-## 9. Provenance & traceability
+- Describe what you need to file; the form-finder ranks the matching forms.
+- Each result shows the filing type (downloadable PDF vs online portal), who files, the deadline and the frequency.
+- Open any form straight from the answer.
 
-Forms are the primary corpus; **legislation is linked, not duplicated**. Each
-form carries a `legislation_ref` to the law it implements, shown as
-*"Underlying law"* on the form panel. The LawAgent answers over the tracked
-legislation/guidance corpus (`(:Document)` nodes) and cites its sources, so every
-answer can be traced back to the official text.
+## How it works
 
----
-
-## 10. Roadmap
-
-- **PDF highlight & provenance** — pdf.js viewer that jumps to and highlights the
-  cited passage.
-- **Wider jurisdiction coverage** — extend the scraper pattern to all JTC domiciles
-  (Isle of Man, Mauritius, Netherlands, Switzerland, Singapore, Hong Kong, USA,
-  UK, South Africa, UAE).
-- **Change digest & alerts** — scheduled per-jurisdiction summaries of what moved.
-
----
-
-*JTC TaxHub · built on FastHTML, Neo4j AuraDB, and xAI Grok.*
+- A live-scraped corpus of tax law across 26 jurisdictions, stored as a graph (documents → versions → changes → citations) in Neo4j.
+- Specialist agents retrieve over that graph (vector + hybrid) and an LLM writes the answer — always grounded in, and citing, the source.
+- Entities, obligations and deadlines sit on top, so the same corpus answers both 'what's the law?' and 'what do I owe, and when?'.
