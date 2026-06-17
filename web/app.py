@@ -15,7 +15,7 @@ import os
 from datetime import date
 
 from fasthtml.common import *
-from starlette.responses import StreamingResponse
+from starlette.responses import StreamingResponse, FileResponse
 
 import sfostore as store
 from agents import orchestrator
@@ -1044,33 +1044,108 @@ def help_page(sess):
         title="Help · SFO Hub", ctx="help")
 
 
+AGENTS_TABLE = [
+    ("profile_agent", "Ground in who the client is — AUM, mix, services, pains"),
+    ("needs_agent", "Detect gaps from a described setup → service categories"),
+    ("services_agent", "Explain the JTC services for a topic"),
+    ("recommend_agent", "Ranked cross/upsell with rationale + estimated value"),
+    ("benchmark_agent", "Aggregate industry benchmarks to frame advice"),
+    ("data_agent", "Quantitative book-wide questions via text-to-SQL"),
+]
+
+# Client-rendered Mermaid diagrams (kept in sync with docs/technical_architecture.md).
+_MERMAID = {
+    "System overview": """flowchart TB
+  USER([SFO principal / advisor / sales team])
+  subgraph APP[FastHTML app · Coolify port 5021]
+    UI[3-pane UI + multi-page views]
+    ORCH[LangGraph orchestrator · SSE]
+    ENGINE[Hybrid cross/upsell engine]
+    STORE[Storage interface]
+  end
+  LLM[[OpenAI-compatible LLM<br/>xAI Grok dev → Azure AI Foundry prod]]
+  DB[(SQLite / Postgres · Neo4j AuraDB target)]
+  R2[(Cloudflare R2 · documents)]
+  USER -->|HTTPS| UI --> ORCH --> ENGINE --> STORE --> DB
+  ORCH --> STORE
+  ORCH --> LLM
+  UI --> R2""",
+    "Agent orchestration": """flowchart TB
+  MSG([User message + open SFO context]) --> ORCH{{Orchestrator · LangGraph react-agent · Grok}}
+  ORCH --> P[profile_agent]
+  ORCH --> N[needs_agent]
+  ORCH --> S[services_agent]
+  ORCH --> R[recommend_agent]
+  ORCH --> B[benchmark_agent]
+  ORCH --> D[data_agent]
+  P --> ST[(Storage)]
+  S --> ST
+  R --> EN[Hybrid engine] --> ST
+  N --> KB[Services + benchmarks]
+  B --> KB
+  D --> SQL[(SQL)]
+  ORCH -->|composed cited answer · SSE| OUT([Reply + markers])""",
+    "Hybrid recommendation engine": """flowchart LR
+  P([SFO profile]) --> RULES[1 Rule catalogue] --> GRAPH[2 Graph expansion]
+  GRAPH --> AI[3 AI re-rank + rationale] --> VAL[4 Estimated value] --> DB[(5 Persist RECOMMENDED)]
+  DB --> UI([Cards · proposals · kanban])
+  AI -.no LLM key.-> DEG[Degrade: rule/graph scores]""",
+    "Data agent — text-to-SQL + evals": """flowchart TB
+  Q([How many family offices over $1bn?]) --> GEN[LLM generates SQL · SELECT-only]
+  GEN --> EXEC[(Execute on SQL)] --> FMT[Format answer] --> A([41 family offices over $1bn])
+  GT[(ground_truth.csv)] --> RUN[run via assistant or sql] --> JUDGE[deepeval GEval · Grok] --> SC([PASS/FAIL])
+  A -.tested by.-> RUN""",
+    "Deployment & CI/CD": """flowchart LR
+  DEV[git push main] --> GH[GitHub Actions] -->|deploy webhook| COOL[Coolify]
+  COOL --> BUILD[Docker build · port 5021] --> RUN[Rolling update · /health] --> LIVE([sfohub.predictivelabs.ai])
+  LIVE --> R2[(Cloudflare R2)]
+  LIVE --> GROK[[xAI Grok / Azure AI Foundry]]""",
+}
+
+MERMAID_INIT = Script(
+    "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';"
+    "mermaid.initialize({startOnLoad:true, theme:'neutral', "
+    "themeVariables:{primaryColor:'#f3ecf3',primaryBorderColor:'#ba2a84',"
+    "lineColor:'#9c5797',primaryTextColor:'#48484f'}});",
+    type="module")
+
+
+@rt("/technical-guide-pdf")
+def technical_guide_pdf(sess):
+    if require(sess):
+        return RedirectResponse("/login", status_code=303)
+    return FileResponse("docs/technical_architecture_slides.pdf",
+                        media_type="application/pdf",
+                        headers={"Content-Disposition": "inline; filename=sfohub-architecture.pdf"})
+
+
 @rt("/technical-guide")
 def technical_guide(sess):
     if (r := require(sess)):
         return r
+    diagrams = []
+    for title, src in _MERMAID.items():
+        diagrams += [H2(title), Pre(src, cls="mermaid",
+                                    style="background:#fff;border:1px solid var(--line);"
+                                          "border-radius:10px;padding:14px;text-align:center")]
     return Page(sess, H1("SFO Hub — Technical guide"),
-        P(A("← Help", href="/help")),
+        Div(A("← Help", href="/help"),
+            A("📑 Download slide deck (PDF)", href="/technical-guide-pdf",
+              cls="btn sm", style="float:right"), style="overflow:auto"),
+        P("Full agentic architecture — the LangGraph orchestrator, its six specialist "
+          "agents, the hybrid recommendation engine, the text-to-SQL data agent, and "
+          "the deployment pipeline. Diagrams render below; a slide deck and the source "
+          "Markdown live in ", A("docs/technical_architecture.md", href="https://github.com/predictivelabsai/sfohub/blob/main/docs/technical_architecture.md"),
+          ".", style="color:var(--muted)"),
         H2("Stack"),
-        Ul(Li("FastHTML 3-pane app (this UI), uvicorn, port 5021."),
-           Li("LangGraph tool-calling advisor over 5 specialist agents; SSE streaming."),
-           Li("Backend-neutral Storage: Neo4j graph (default) / SQLite·Postgres."),
+        Ul(Li("FastHTML multi-page app (this UI), uvicorn, port 5021."),
+           Li("LangGraph tool-calling advisor over 6 specialist agents; SSE streaming."),
+           Li("Backend-neutral Storage: SQLite·Postgres (live) / Neo4j AuraDB (target)."),
            Li("OpenAI-compatible LLM: xAI Grok (dev) → Azure AI Foundry (prod)."),
-           Li("Documents on Cloudflare R2 (S3-compatible) / local volume / Azure Blob.")),
-        H2("Graph model (Neo4j)"),
-        Pre("(:SFO)-[:HOLDS_SERVICE]->(:Service)\n"
-            "(:SFO)-[:RECOMMENDED {kind,score,status}]->(:Service)\n"
-            "(:SFO)-[:HAS_MEMBER]->(:Member)\n"
-            "(:SFO)-[:HAS_DOCUMENT]->(:Doc)\n"
-            "(:SFO)-[:HAS_ACTION]->(:Action)\n"
-            "(:SFO)-[:HAS_CONVERSATION]->(:Conversation)-[:HAS_MESSAGE]->(:Message)\n"
-            "(:Service)-[:CROSS_SELLS_TO {weight}]->(:Service)",
-            style="background:#faf7fb;padding:12px;border-radius:8px;font-size:12.5px"),
-        H2("The hybrid engine"),
-        P("engine/rules.py (transparent catalogue) → cross-sell graph expansion → "
-          "engine/crosssell.py AI re-rank → persisted RECOMMENDED edges. "
-          "engine/proposals.py drafts client-ready proposals."),
-        H2("Deployment"),
-        P("Dev: Docker on Coolify (port 5021) behind Cloudflare, AuraDB + R2. "
-          "Production target: Azure Container Apps + AI Foundry + Neo4j AuraDB. "
-          "See docs/architecture_readme.md for the full guide."),
+           Li("Documents on Cloudflare R2; deploy via GitHub Actions → Coolify.")),
+        H2("The six specialist agents"),
+        Table(Tr(Th("Agent"), Th("Job")),
+              *[Tr(Td(B(n)), Td(d)) for n, d in AGENTS_TABLE]),
+        *diagrams,
+        MERMAID_INIT,
         title="Technical guide · SFO Hub", ctx="help")
