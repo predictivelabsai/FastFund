@@ -176,7 +176,10 @@ class Neo4jStore(Storage):
         self._write("MATCH (n:SFO {uid:$i}) "
                     "OPTIONAL MATCH (n)-[:HAS_CONVERSATION]->(c:Conversation)"
                     "-[:HAS_MESSAGE]->(m:Message) "
-                    "DETACH DELETE n, c, m", i=sfo_id)
+                    "OPTIONAL MATCH (n)-[:HAS_MEMBER]->(mem:Member) "
+                    "OPTIONAL MATCH (n)-[:HAS_DOCUMENT]->(d:Doc) "
+                    "OPTIONAL MATCH (n)-[:HAS_ACTION]->(a:Action) "
+                    "DETACH DELETE n, c, m, mem, d, a", i=sfo_id)
 
     # ── Services ──────────────────────────────────────────────────────────────
     def upsert_service(self, service: dict) -> int:
@@ -246,7 +249,7 @@ class Neo4jStore(Storage):
         # current value) so a partial upsert never clobbers score/value/rationale.
         sets = {"kind": rec.get("kind"), "score": rec.get("score"),
                 "rationale": rec.get("rationale"), "est_value_usd": rec.get("est_value_usd"),
-                "source": rec.get("source")}
+                "source": rec.get("source"), "proposal": rec.get("proposal")}
         rows = self._write(
             "MATCH (o:SFO {uid:$sfo}), (s:Service {uid:$svc}) "
             "MERGE (o)-[r:RECOMMENDED]->(s) "
@@ -255,7 +258,8 @@ class Neo4jStore(Storage):
             "SET r.kind=coalesce($set.kind, r.kind), r.score=coalesce($set.score, r.score), "
             "r.rationale=coalesce($set.rationale, r.rationale), "
             "r.est_value_usd=coalesce($set.est_value_usd, r.est_value_usd), "
-            "r.source=coalesce($set.source, r.source) RETURN r.uid AS uid",
+            "r.source=coalesce($set.source, r.source), "
+            "r.proposal=coalesce($set.proposal, r.proposal) RETURN r.uid AS uid",
             sfo=rec["sfo_id"], svc=rec["service_id"], uid=self._next_id(), t=utcnow(),
             set=sets)
         return rows[0]["uid"]
@@ -274,7 +278,7 @@ class Neo4jStore(Storage):
             f"MATCH (o:SFO)-[r:RECOMMENDED]->(s:Service){where} "
             "RETURN r.uid AS id, o.uid AS sfo_id, s.uid AS service_id, r.kind AS kind, "
             "r.score AS score, r.rationale AS rationale, r.est_value_usd AS est_value_usd, "
-            "r.source AS source, r.status AS status, s.name AS service_name, "
+            "r.source AS source, r.status AS status, r.proposal AS proposal, s.name AS service_name, "
             "s.category AS service_category, s.tier AS service_tier, o.name AS sfo_name "
             "ORDER BY r.score DESC LIMIT $l", **params)
         return [dict(r) for r in rows]
@@ -282,6 +286,133 @@ class Neo4jStore(Storage):
     def set_recommendation_status(self, recommendation_id: int, status: str) -> None:
         self._write("MATCH ()-[r:RECOMMENDED {uid:$i}]->() SET r.status=$s",
                     i=recommendation_id, s=status)
+
+    def set_recommendation_proposal(self, recommendation_id: int, proposal: str) -> None:
+        self._write("MATCH ()-[r:RECOMMENDED {uid:$i}]->() SET r.proposal=$p",
+                    i=recommendation_id, p=proposal)
+
+    # ── Family members ────────────────────────────────────────────────────────
+    def upsert_family_member(self, member: dict) -> int:
+        props = {"role": member.get("role"), "generation": member.get("generation"),
+                 "age": member.get("age"), "notes": member.get("notes")}
+        rows = self._write(
+            "MATCH (o:SFO {uid:$sfo}) MERGE (o)-[:HAS_MEMBER]->(m:Member {name:$name}) "
+            "ON CREATE SET m.uid=$uid, m.created_at=$t SET m += $props RETURN m.uid AS uid",
+            sfo=member["sfo_id"], name=member.get("name"), uid=self._next_id(),
+            t=utcnow(), props=props)
+        return rows[0]["uid"]
+
+    def list_family_members(self, sfo_id: int) -> list[dict]:
+        rows = self._run(
+            "MATCH (o:SFO {uid:$s})-[:HAS_MEMBER]->(m:Member) RETURN m "
+            "ORDER BY m.generation, m.name", s=sfo_id)
+        out = []
+        for r in rows:
+            d = dict(r["m"])
+            d["id"] = d.pop("uid", None)
+            out.append(d)
+        return out
+
+    def delete_family_member(self, member_id: int) -> None:
+        self._write("MATCH (m:Member {uid:$i}) DETACH DELETE m", i=member_id)
+
+    # ── Documents ─────────────────────────────────────────────────────────────
+    def add_document(self, doc: dict) -> int:
+        uid = self._next_id()
+        self._write(
+            "CREATE (d:Doc {uid:$uid, name:$name, doc_type:$dt, storage_key:$sk, "
+            "byte_size:$bs, content_text:$ct, uploaded_by:$ub, created_at:$t}) "
+            "WITH d MATCH (o:SFO {uid:$sfo}) MERGE (o)-[:HAS_DOCUMENT]->(d)",
+            uid=uid, name=doc.get("name"), dt=doc.get("doc_type"),
+            sk=doc.get("storage_key"), bs=doc.get("byte_size"),
+            ct=doc.get("content_text"), ub=doc.get("uploaded_by"), t=utcnow(),
+            sfo=doc.get("sfo_id") if doc.get("sfo_id") is not None else -1)
+        return uid
+
+    def get_document(self, document_id: int) -> dict | None:
+        rows = self._run("MATCH (d:Doc {uid:$i}) OPTIONAL MATCH (o:SFO)-[:HAS_DOCUMENT]->(d) "
+                         "RETURN d, o.uid AS sfo_id", i=document_id)
+        if not rows:
+            return None
+        d = dict(rows[0]["d"])
+        d["id"] = d.pop("uid")
+        d["sfo_id"] = rows[0]["sfo_id"]
+        return d
+
+    def list_documents(self, sfo_id: int | None = None, limit: int = 500) -> list[dict]:
+        if sfo_id is not None:
+            rows = self._run("MATCH (o:SFO {uid:$s})-[:HAS_DOCUMENT]->(d:Doc) "
+                             "RETURN d, o.uid AS sfo_id, o.name AS sfo_name "
+                             "ORDER BY d.uid DESC LIMIT $l", s=sfo_id, l=limit)
+        else:
+            rows = self._run("MATCH (d:Doc) OPTIONAL MATCH (o:SFO)-[:HAS_DOCUMENT]->(d) "
+                             "RETURN d, o.uid AS sfo_id, o.name AS sfo_name "
+                             "ORDER BY d.uid DESC LIMIT $l", l=limit)
+        out = []
+        for r in rows:
+            d = dict(r["d"])
+            d["id"] = d.pop("uid")
+            d["sfo_id"] = r["sfo_id"]
+            d["sfo_name"] = r["sfo_name"]
+            out.append(d)
+        return out
+
+    def delete_document(self, document_id: int) -> None:
+        self._write("MATCH (d:Doc {uid:$i}) DETACH DELETE d", i=document_id)
+
+    # ── Next actions ──────────────────────────────────────────────────────────
+    def upsert_next_action(self, action: dict) -> int:
+        if action.get("id"):
+            self._write(
+                "MATCH (a:Action {uid:$i}) SET a.kind=$kind, a.title=$title, "
+                "a.due_date=$due, a.status=$status, a.notes=$notes, "
+                "a.recommendation_id=$rid",
+                i=action["id"], kind=action.get("kind"), title=action.get("title"),
+                due=action.get("due_date"), status=action.get("status") or "open",
+                notes=action.get("notes"), rid=action.get("recommendation_id"))
+            return action["id"]
+        uid = self._next_id()
+        self._write(
+            "CREATE (a:Action {uid:$uid, kind:$kind, title:$title, due_date:$due, "
+            "status:$status, notes:$notes, recommendation_id:$rid, created_at:$t}) "
+            "WITH a MATCH (o:SFO {uid:$sfo}) MERGE (o)-[:HAS_ACTION]->(a)",
+            uid=uid, kind=action.get("kind") or "follow_up", title=action.get("title"),
+            due=action.get("due_date"), status=action.get("status") or "open",
+            notes=action.get("notes"), rid=action.get("recommendation_id"),
+            t=utcnow(), sfo=action.get("sfo_id") if action.get("sfo_id") is not None else -1)
+        return uid
+
+    def list_next_actions(self, sfo_id: int | None = None, status: str | None = None,
+                          due_before: str | None = None, limit: int = 1000) -> list[dict]:
+        clauses, params = [], {"l": limit}
+        match = "MATCH (o:SFO)-[:HAS_ACTION]->(a:Action)"
+        if sfo_id is not None:
+            match = "MATCH (o:SFO {uid:$s})-[:HAS_ACTION]->(a:Action)"
+            params["s"] = sfo_id
+        if status:
+            clauses.append("a.status=$st")
+            params["st"] = status
+        if due_before:
+            clauses.append("a.due_date IS NOT NULL AND a.due_date<=$db")
+            params["db"] = due_before
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._run(
+            f"{match}{where} RETURN a, o.uid AS sfo_id, o.name AS sfo_name "
+            "ORDER BY a.due_date IS NULL, a.due_date LIMIT $l", **params)
+        out = []
+        for r in rows:
+            d = dict(r["a"])
+            d["id"] = d.pop("uid")
+            d["sfo_id"] = r["sfo_id"]
+            d["sfo_name"] = r["sfo_name"]
+            out.append(d)
+        return out
+
+    def set_next_action_status(self, action_id: int, status: str) -> None:
+        self._write("MATCH (a:Action {uid:$i}) SET a.status=$s", i=action_id, s=status)
+
+    def delete_next_action(self, action_id: int) -> None:
+        self._write("MATCH (a:Action {uid:$i}) DETACH DELETE a", i=action_id)
 
     # ── Conversations ─────────────────────────────────────────────────────────
     def create_conversation(self, user_email: str, sfo_id: int | None = None,

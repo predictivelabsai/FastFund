@@ -173,6 +173,71 @@ class Storage(abc.ABC):
     def get_messages(self, conversation_id: int) -> list[dict]:
         """Messages for a conversation in order: ``{role, content, created_at}``."""
 
+    @abc.abstractmethod
+    def set_recommendation_proposal(self, recommendation_id: int, proposal: str) -> None:
+        """Store an AI-generated proposal/next-step narrative on a recommendation."""
+
+    # ── Family members (principals, next-gen, advisors) ─────────────────────
+    # An SFO has people: the (:SFO)-[:HAS_MEMBER]->(:Member) sub-graph used by the
+    # profile page and the governance/next-gen recommendations.
+
+    @abc.abstractmethod
+    def upsert_family_member(self, member: dict) -> int:
+        """Insert/update a member by (sfo_id, name). Fields: sfo_id, name, role
+        (principal/spouse/next_gen/advisor), generation, age, notes. Returns id."""
+
+    @abc.abstractmethod
+    def list_family_members(self, sfo_id: int) -> list[dict]:
+        ...
+
+    @abc.abstractmethod
+    def delete_family_member(self, member_id: int) -> None:
+        ...
+
+    # ── Documents (uploaded portfolio summaries, trust deeds, inventories) ───
+    # The file bytes live in the doc store (local volume / Cloudflare R2 / Blob);
+    # this records the metadata + storage key and attaches it to an SFO.
+
+    @abc.abstractmethod
+    def add_document(self, doc: dict) -> int:
+        """Record an uploaded document. Fields: sfo_id, name, doc_type, storage_key,
+        byte_size, content_text (optional extracted text), uploaded_by. Returns id."""
+
+    @abc.abstractmethod
+    def get_document(self, document_id: int) -> dict | None:
+        ...
+
+    @abc.abstractmethod
+    def list_documents(self, sfo_id: int | None = None, limit: int = 500) -> list[dict]:
+        """Documents, newest first, enriched with the SFO name."""
+
+    @abc.abstractmethod
+    def delete_document(self, document_id: int) -> None:
+        ...
+
+    # ── Next actions (the pipeline calendar: consultations, follow-ups) ──────
+    # A scheduled task tied to an SFO (and optionally a recommendation): book a
+    # consultation, send a proposal, follow up. Powers the calendar + dashboard.
+
+    @abc.abstractmethod
+    def upsert_next_action(self, action: dict) -> int:
+        """Insert/update by id (or create). Fields: sfo_id, recommendation_id
+        (optional), kind (consultation/proposal/follow_up/review), title,
+        due_date (ISO), status (open/done/cancelled), notes. Returns id."""
+
+    @abc.abstractmethod
+    def list_next_actions(self, sfo_id: int | None = None, status: str | None = None,
+                          due_before: str | None = None, limit: int = 1000) -> list[dict]:
+        """Next actions, soonest due first, enriched with the SFO name."""
+
+    @abc.abstractmethod
+    def set_next_action_status(self, action_id: int, status: str) -> None:
+        ...
+
+    @abc.abstractmethod
+    def delete_next_action(self, action_id: int) -> None:
+        ...
+
     # ── Analytics (the admin/sales dashboard) ──────────────────────────────
 
     @abc.abstractmethod

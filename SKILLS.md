@@ -53,11 +53,15 @@ Default login: `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`
 |-----|------|
 | `/` | 3-pane workspace (client book · AI advisor · profile+recs). `?sfo=<id>` opens a family |
 | `/chat` (POST) | SSE stream from the LangGraph advisor |
-| `/recommend/{id}` (POST) | Re-run the hybrid engine for one SFO |
-| `/panel/{id}` | Right-panel refresh (profile + recommendations) |
-| `/dashboard` | Analytics: interest heatmap, upsell funnel, pipeline value |
+| `/sfo/{id}` | SFO detail: allocation, members, recs, actions, documents, history |
+| `/opportunities` | Every recommendation across the book, filterable |
+| `/calendar` | Pipeline calendar of next actions, urgency-coded |
+| `/coverage` | Service coverage matrix (held / recommended / gap) |
+| `/graph?mode=book\|schema` | Relationship graph (vis-network) |
 | `/services`, `/service/{id}` | Service catalogue + detail (cross-sell partners) |
-| `/help` | In-app guide |
+| `/documents`, `/upload` | Document browser + upload (R2 / local) |
+| `/dashboard` | Analytics: funnel, pipeline value, allocation, interest heatmap |
+| `/help`, `/technical-guide` | In-app guides |
 
 ---
 
@@ -76,6 +80,16 @@ bring up local Neo4j (§5) first.
 
 When you add a `Storage` method: add it to `storage/base.py`, implement in **both**
 `sqlite_store.py` and `neo4j_store.py`, and add a contract assertion here.
+
+### Recommendation-quality eval
+
+```bash
+python -m evals.recommend_eval            # rules only (no DB / no AI)
+python -m evals.recommend_eval --graph    # also expand via the cross-sell graph (needs seeded DB)
+```
+
+Scores `engine.rules.fire` against the ground-truth set in `evals/cases.yaml`
+(precision / recall / full-hit rate). Add cases there as the rule catalogue grows.
 
 ---
 
@@ -201,6 +215,8 @@ instance id (not `neo4j`) — trust the downloaded credentials file.
 | `LLM_PROVIDER` | no | `xai` | `xai` (dev) or `azure` (prod) |
 | `XAI_API_KEY` / `XAI_BASE_URL` / `GROK_MODEL` | no | — / x.ai / grok-4-1-fast-reasoning | xAI Grok |
 | `AZURE_AI_FOUNDRY_ENDPOINT` / `AZURE_AI_FOUNDRY_API_KEY` / `FOUNDRY_MODEL` | azure | — | Azure AI Foundry |
+| `DOC_STORAGE` | no | `local` | Document blob store: `local` or `r2` |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | r2 | — | Cloudflare R2 credentials |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | admin@jtcgroup.com / change-me | Seeded admin login |
 | `SFOHUB_PUBLIC` | no | `0` | `1` disables login (demo mode) |
 | `APP_SECRET` | yes (prod) | — | Session signing secret |

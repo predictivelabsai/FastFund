@@ -72,9 +72,22 @@ class SqliteStore(Storage):
             """CREATE TABLE IF NOT EXISTS recommendations(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sfo_id INTEGER, service_id INTEGER, kind TEXT, score REAL,
-                rationale TEXT, est_value_usd REAL, source TEXT,
+                rationale TEXT, est_value_usd REAL, source TEXT, proposal TEXT,
                 status TEXT DEFAULT 'suggested', created_at TEXT,
                 UNIQUE(sfo_id, service_id))""",
+            """CREATE TABLE IF NOT EXISTS family_members(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sfo_id INTEGER, name TEXT, role TEXT, generation INTEGER,
+                age INTEGER, notes TEXT, created_at TEXT,
+                UNIQUE(sfo_id, name))""",
+            """CREATE TABLE IF NOT EXISTS documents(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sfo_id INTEGER, name TEXT, doc_type TEXT, storage_key TEXT,
+                byte_size INTEGER, content_text TEXT, uploaded_by TEXT, created_at TEXT)""",
+            """CREATE TABLE IF NOT EXISTS next_actions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sfo_id INTEGER, recommendation_id INTEGER, kind TEXT, title TEXT,
+                due_date TEXT, status TEXT DEFAULT 'open', notes TEXT, created_at TEXT)""",
             """CREATE TABLE IF NOT EXISTS conversations(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_email TEXT, sfo_id INTEGER, title TEXT,
@@ -280,7 +293,8 @@ class SqliteStore(Storage):
             "kind": rec.get("kind") or "cross_sell", "score": rec.get("score") or 0.0,
             "rationale": rec.get("rationale"),
             "est_value_usd": rec.get("est_value_usd") or 0.0,
-            "source": rec.get("source") or "hybrid", "created_at": utcnow(),
+            "source": rec.get("source") or "hybrid", "proposal": rec.get("proposal"),
+            "created_at": utcnow(),
         }
         with self._conn() as c:
             existing = c.execute(text("SELECT id FROM recommendations"
@@ -290,8 +304,8 @@ class SqliteStore(Storage):
                 rid = existing[0]
                 # Update only fields actually supplied — never clobber an existing
                 # score/value/rationale with a default on a partial upsert.
-                upd = [k for k in ("kind", "score", "rationale", "est_value_usd", "source")
-                       if k in rec]
+                upd = [k for k in ("kind", "score", "rationale", "est_value_usd",
+                                   "source", "proposal") if k in rec]
                 if upd:
                     sets = ",".join(f"{k}=:{k}" for k in upd)
                     c.execute(text(f"UPDATE recommendations SET {sets} WHERE id=:id"),
@@ -327,6 +341,121 @@ class SqliteStore(Storage):
         with self._conn() as c:
             c.execute(text("UPDATE recommendations SET status=:s WHERE id=:i"),
                       {"s": status, "i": recommendation_id})
+
+    def set_recommendation_proposal(self, recommendation_id: int, proposal: str) -> None:
+        with self._conn() as c:
+            c.execute(text("UPDATE recommendations SET proposal=:p WHERE id=:i"),
+                      {"p": proposal, "i": recommendation_id})
+
+    # ── Family members ──────────────────────────────────────────────────────
+    def upsert_family_member(self, member: dict) -> int:
+        params = {"sfo_id": member["sfo_id"], "name": member.get("name"),
+                  "role": member.get("role"), "generation": member.get("generation"),
+                  "age": member.get("age"), "notes": member.get("notes"),
+                  "created_at": utcnow()}
+        with self._conn() as c:
+            existing = c.execute(text("SELECT id FROM family_members WHERE sfo_id=:s"
+                                      " AND name=:n"),
+                                 {"s": params["sfo_id"], "n": params["name"]}).first()
+            if existing:
+                mid = existing[0]
+                cols = ",".join(f"{k}=:{k}" for k in params if k != "created_at")
+                c.execute(text(f"UPDATE family_members SET {cols} WHERE id=:id"),
+                          {**params, "id": mid})
+                return mid
+            keys = ",".join(params)
+            vals = ",".join(f":{k}" for k in params)
+            c.execute(text(f"INSERT INTO family_members({keys}) VALUES({vals})"), params)
+            return c.execute(text("SELECT id FROM family_members WHERE sfo_id=:s AND name=:n"),
+                             {"s": params["sfo_id"], "n": params["name"]}).first()[0]
+
+    def list_family_members(self, sfo_id: int) -> list[dict]:
+        with self.engine.connect() as c:
+            rows = c.execute(text("SELECT * FROM family_members WHERE sfo_id=:s"
+                                  " ORDER BY generation, name"), {"s": sfo_id})
+            return [self._row(r) for r in rows]
+
+    def delete_family_member(self, member_id: int) -> None:
+        with self._conn() as c:
+            c.execute(text("DELETE FROM family_members WHERE id=:i"), {"i": member_id})
+
+    # ── Documents ───────────────────────────────────────────────────────────
+    def add_document(self, doc: dict) -> int:
+        params = {"sfo_id": doc.get("sfo_id"), "name": doc.get("name"),
+                  "doc_type": doc.get("doc_type"), "storage_key": doc.get("storage_key"),
+                  "byte_size": doc.get("byte_size"), "content_text": doc.get("content_text"),
+                  "uploaded_by": doc.get("uploaded_by"), "created_at": utcnow()}
+        with self._conn() as c:
+            keys = ",".join(params)
+            vals = ",".join(f":{k}" for k in params)
+            c.execute(text(f"INSERT INTO documents({keys}) VALUES({vals})"), params)
+            return c.execute(text("SELECT id FROM documents ORDER BY id DESC LIMIT 1")).first()[0]
+
+    def get_document(self, document_id: int) -> dict | None:
+        with self.engine.connect() as c:
+            r = c.execute(text("SELECT * FROM documents WHERE id=:i"),
+                          {"i": document_id}).first()
+        return self._row(r)
+
+    def list_documents(self, sfo_id: int | None = None, limit: int = 500) -> list[dict]:
+        q = ("SELECT d.*, o.name AS sfo_name FROM documents d"
+             " LEFT JOIN sfos o ON o.id=d.sfo_id")
+        p = {"l": limit}
+        if sfo_id is not None:
+            q += " WHERE d.sfo_id=:s"
+            p["s"] = sfo_id
+        q += " ORDER BY d.id DESC LIMIT :l"
+        with self.engine.connect() as c:
+            return [self._row(r) for r in c.execute(text(q), p)]
+
+    def delete_document(self, document_id: int) -> None:
+        with self._conn() as c:
+            c.execute(text("DELETE FROM documents WHERE id=:i"), {"i": document_id})
+
+    # ── Next actions ────────────────────────────────────────────────────────
+    def upsert_next_action(self, action: dict) -> int:
+        params = {"sfo_id": action.get("sfo_id"),
+                  "recommendation_id": action.get("recommendation_id"),
+                  "kind": action.get("kind") or "follow_up", "title": action.get("title"),
+                  "due_date": action.get("due_date"), "status": action.get("status") or "open",
+                  "notes": action.get("notes"), "created_at": utcnow()}
+        with self._conn() as c:
+            if action.get("id"):
+                cols = ",".join(f"{k}=:{k}" for k in params if k != "created_at")
+                c.execute(text(f"UPDATE next_actions SET {cols} WHERE id=:id"),
+                          {**params, "id": action["id"]})
+                return action["id"]
+            keys = ",".join(params)
+            vals = ",".join(f":{k}" for k in params)
+            c.execute(text(f"INSERT INTO next_actions({keys}) VALUES({vals})"), params)
+            return c.execute(text("SELECT id FROM next_actions ORDER BY id DESC LIMIT 1")).first()[0]
+
+    def list_next_actions(self, sfo_id: int | None = None, status: str | None = None,
+                          due_before: str | None = None, limit: int = 1000) -> list[dict]:
+        q = ("SELECT a.*, o.name AS sfo_name FROM next_actions a"
+             " LEFT JOIN sfos o ON o.id=a.sfo_id WHERE 1=1")
+        p = {"l": limit}
+        if sfo_id is not None:
+            q += " AND a.sfo_id=:s"
+            p["s"] = sfo_id
+        if status:
+            q += " AND a.status=:st"
+            p["st"] = status
+        if due_before:
+            q += " AND a.due_date IS NOT NULL AND a.due_date<=:db"
+            p["db"] = due_before
+        q += " ORDER BY (a.due_date IS NULL), a.due_date LIMIT :l"
+        with self.engine.connect() as c:
+            return [self._row(r) for r in c.execute(text(q), p)]
+
+    def set_next_action_status(self, action_id: int, status: str) -> None:
+        with self._conn() as c:
+            c.execute(text("UPDATE next_actions SET status=:s WHERE id=:i"),
+                      {"s": status, "i": action_id})
+
+    def delete_next_action(self, action_id: int) -> None:
+        with self._conn() as c:
+            c.execute(text("DELETE FROM next_actions WHERE id=:i"), {"i": action_id})
 
     # ── Conversations ──────────────────────────────────────────────────────
     def create_conversation(self, user_email: str, sfo_id: int | None = None,

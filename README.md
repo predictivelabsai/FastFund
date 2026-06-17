@@ -44,24 +44,33 @@ Coolify/Cloudflare; the production target is Microsoft Azure.
 storage/base.py            Storage interface (backend-neutral)
 storage/sqlite_store.py      ├─ SQLite/Postgres backend (zero-infra)
 storage/neo4j_store.py       └─ Neo4j graph backend (default)
+storage/docstore.py        document blob store: local volume / Cloudflare R2 / Blob
 sfostore.py                store facade → active backend (import sfostore as store)
 data/services.yaml         JTC service catalogue + cross-sell graph
-data/synth.py              synthetic SFO generator + seeder (Faker)
+data/synth.py              synthetic generator: SFOs, members, conversations, docs, actions
 engine/rules.py            transparent cross/upsell rule catalogue
-engine/crosssell.py        hybrid engine: rules → graph expansion → AI re-rank
+engine/crosssell.py        hybrid engine: rules → graph expansion → AI re-rank + scheduling
+engine/proposals.py        AI proposal-text generation per recommendation
 rag/llm.py                 OpenAI-compatible LLM client (Grok → Azure Foundry)
 rag/knowledge.py           services + industry-benchmark retrieval
 agents/orchestrator.py     LangGraph tool-calling advisor (+ SSE streaming)
 agents/tools.py            specialist agents: profile / needs / services / recommend / benchmark
-web/app.py                 FastHTML 3-pane app (uvicorn web.app:app)
+web/monitor.py             next-action urgency + pipeline calendar roll-ups
+web/coverage.py            SFO × service coverage matrix
+web/graphdata.py           vis-network data (client book + cross-sell schema)
+web/app.py                 FastHTML multi-page app (uvicorn web.app:app)
+evals/                     recommendation-quality eval harness
 ```
 
 The graph shape (Neo4j):
 
 ```
 (:SFO)-[:HOLDS_SERVICE]->(:Service)
+(:SFO)-[:RECOMMENDED {kind, score, status, proposal}]->(:Service)
+(:SFO)-[:HAS_MEMBER]->(:Member)
+(:SFO)-[:HAS_DOCUMENT]->(:Doc)
+(:SFO)-[:HAS_ACTION]->(:Action)
 (:SFO)-[:HAS_CONVERSATION]->(:Conversation)-[:HAS_MESSAGE]->(:Message)
-(:SFO)-[:RECOMMENDED {kind, score, status}]->(:Service)
 (:Service)-[:CROSS_SELLS_TO {weight}]->(:Service)
 ```
 
@@ -122,3 +131,8 @@ python -m pytest tests/ -q
 `tests/test_storage.py` is one contract suite parametrised over **both** backends
 so `DATA_STORAGE` can't silently change behaviour (the Neo4j case skips if no
 Neo4j is reachable).
+
+```bash
+python -m evals.recommend_eval          # recommendation-quality eval (rules, no DB/AI needed)
+python -m evals.recommend_eval --graph  # also expand via the cross-sell graph (needs seeded DB)
+```

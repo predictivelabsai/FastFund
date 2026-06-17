@@ -88,3 +88,55 @@ def test_conversations(store):
     msgs = store.get_messages(cid)
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     assert store.list_conversations(user_email="admin@jtcgroup.com")[0]["id"] == cid
+
+
+def test_family_members(store):
+    sid = store.upsert_sfo({"client_ref": "F-1", "name": "Fam FO"})
+    mid = store.upsert_family_member({"sfo_id": sid, "name": "Anna", "role": "principal",
+                                      "generation": 1, "age": 68})
+    assert store.upsert_family_member({"sfo_id": sid, "name": "Anna", "age": 69}) == mid
+    members = store.list_family_members(sid)
+    assert len(members) == 1 and members[0]["age"] == 69
+    store.delete_family_member(mid)
+    assert store.list_family_members(sid) == []
+
+
+def test_documents(store):
+    sid = store.upsert_sfo({"client_ref": "D-1", "name": "Doc FO"})
+    did = store.add_document({"sfo_id": sid, "name": "portfolio.pdf",
+                              "doc_type": "portfolio", "storage_key": "k/1.pdf",
+                              "byte_size": 1234})
+    doc = store.get_document(did)
+    assert doc["name"] == "portfolio.pdf" and doc["sfo_id"] == sid
+    assert store.list_documents(sfo_id=sid)[0]["sfo_name"] == "Doc FO"
+    store.delete_document(did)
+    assert store.get_document(did) is None
+
+
+def test_next_actions(store):
+    sid = store.upsert_sfo({"client_ref": "N-1", "name": "Act FO"})
+    aid = store.upsert_next_action({"sfo_id": sid, "kind": "consultation",
+                                    "title": "Intro call", "due_date": "2026-07-01"})
+    aid2 = store.upsert_next_action({"sfo_id": sid, "kind": "follow_up",
+                                     "title": "Send proposal", "due_date": "2026-06-20"})
+    acts = store.list_next_actions(sfo_id=sid)
+    assert [a["title"] for a in acts] == ["Send proposal", "Intro call"]  # soonest first
+    assert store.list_next_actions(due_before="2026-06-25")[0]["id"] == aid2
+    store.set_next_action_status(aid, "done")
+    assert store.list_next_actions(sfo_id=sid, status="done")[0]["id"] == aid
+    store.delete_next_action(aid2)
+
+
+def test_proposal(store):
+    sid = store.upsert_sfo({"client_ref": "P-1", "name": "Prop FO"})
+    vid = store.upsert_service({"key": "gov", "name": "Governance", "category": "governance",
+                               "tier": "premium", "description": "gov"})
+    rid = store.upsert_recommendation({"sfo_id": sid, "service_id": vid, "score": 0.8,
+                                       "est_value_usd": 5e5})
+    store.set_recommendation_proposal(rid, "Dear family, we propose ...")
+    rec = store.list_recommendations(sfo_id=sid)[0]
+    assert rec["proposal"].startswith("Dear family")
+    # partial upsert must not clobber the proposal or value
+    store.upsert_recommendation({"sfo_id": sid, "service_id": vid, "score": 0.95})
+    rec = store.list_recommendations(sfo_id=sid)[0]
+    assert rec["proposal"].startswith("Dear family") and rec["est_value_usd"] == 5e5

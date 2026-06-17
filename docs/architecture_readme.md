@@ -39,12 +39,21 @@ stack and look-and-feel carry over. For a quick start see
 | | Neo4j graph backend (default) | `storage/neo4j_store.py` |
 | | SQLite / Postgres relational backend | `storage/sqlite_store.py` |
 | | One-line backend switch via `DATA_STORAGE` | `storage/__init__.py` |
-| **Web app** | FastHTML 3-pane app: client book · AI chat · profile + recommendations | `web/app.py` |
-| | Analytics dashboard: interest heatmap, upsell funnel, pipeline value | `web/app.py` |
-| | Service catalogue + service detail (cross-sell partners) | `web/app.py` |
-| **Data** | Synthetic SFO generator (Faker) + funnel seeder | `data/synth.py` |
+| | AI proposal generation + next-action scheduling | `engine/proposals.py`, `engine/crosssell.py` |
+| **Web app** | FastHTML multi-page app over a shared sidebar chrome | `web/app.py` |
+| | 3-pane home: client book · AI chat · profile + recommendations | `web/app.py` |
+| | SFO detail: Plotly allocation, members, recs, actions, documents, history | `web/app.py` |
+| | Opportunities funnel (filterable) + inline funnel-advance actions | `web/app.py` |
+| | Pipeline calendar (urgency-coded next actions) | `web/app.py`, `web/monitor.py` |
+| | Service coverage matrix (held / recommended / gap) | `web/app.py`, `web/coverage.py` |
+| | Relationship graph (vis-network): client book + cross-sell schema | `web/app.py`, `web/graphdata.py` |
+| | Analytics dashboard (Plotly): funnel, pipeline value, allocation, heatmap | `web/app.py` |
+| | Document upload/browser (R2 / local / Blob) | `web/app.py`, `storage/docstore.py` |
+| | Help + technical guide | `web/app.py` |
+| **Data** | Synthetic SFO generator (Faker): families, members, conversations, docs, actions | `data/synth.py` |
 | **Ops** | Healthcheck, Dockerfile, Coolify-labelled compose, local-Neo4j helper | `Dockerfile`, `docker-compose.yaml`, `scripts/neo4j_local.sh` |
 | **Tests** | Cross-backend storage contract suite | `tests/test_storage.py` |
+| **Evals** | Recommendation-quality harness over a ground-truth set | `evals/` |
 
 ### Web routes (`web/app.py`, port 5021)
 
@@ -56,9 +65,16 @@ stack and look-and-feel carry over. For a quick start see
 | `/chat` (POST) | SSE stream from the LangGraph orchestrator (degrades without a key) |
 | `/panel/{sfo_id}` | Right-panel refresh (profile + live recommendations) |
 | `/recommend/{sfo_id}` (POST) | Run the hybrid engine for one SFO, re-render the panel |
+| `/sfo/{id}` | SFO detail: allocation, members, recs, actions, documents, history |
+| `/opportunities` | Every recommendation across the book, filterable |
+| `/calendar` | Pipeline calendar of next actions, urgency-coded |
+| `/coverage` | Service coverage matrix (held / recommended / gap) |
+| `/graph?mode=book\|schema` | Relationship graph (vis-network) |
 | `/services`, `/service/{id}` | Service catalogue + detail with cross-sell partners |
-| `/dashboard` | Analytics: interest heatmap, upsell funnel, pipeline value, stages |
-| `/help` | In-app help & guide |
+| `/documents`, `/upload`, `/document/{id}/file` | Document browser + upload (R2/local) |
+| `/dashboard` | Analytics: funnel, pipeline value, allocation, interest heatmap |
+| `/rec/{id}/{proposal\|book\|status}` (POST) | Recommendation funnel actions (HTMX) |
+| `/help`, `/technical-guide` | In-app help & technical guide |
 
 ---
 
@@ -154,9 +170,15 @@ graph LR
     SV["(:Service)<br/>uid, key, name, category, tier"]
     C["(:Conversation)<br/>uid, title, updated_at"]
     M["(:Message)<br/>uid, role, content"]
+    MEM["(:Member)<br/>uid, name, role, generation"]
+    DOC["(:Doc)<br/>uid, name, doc_type, storage_key"]
+    ACT["(:Action)<br/>uid, kind, title, due_date, status"]
 
     O -- HOLDS_SERVICE --> SV
-    O -- "RECOMMENDED {kind, score, status, est_value_usd}" --> SV
+    O -- "RECOMMENDED {kind, score, status, est_value_usd, proposal}" --> SV
+    O -- HAS_MEMBER --> MEM
+    O -- HAS_DOCUMENT --> DOC
+    O -- HAS_ACTION --> ACT
     O -- HAS_CONVERSATION --> C
     C -- HAS_MESSAGE --> M
     SV -- "CROSS_SELLS_TO {weight}" --> SV
@@ -221,6 +243,9 @@ Copy `.env.example` → `.env` (gitignored). Key settings:
 | `LLM_PROVIDER` | no | `xai` | `xai` (dev) or `azure` (production / Azure AI Foundry) |
 | `XAI_API_KEY` / `XAI_BASE_URL` / `GROK_MODEL` | no | — / x.ai / grok-4-1-fast-reasoning | xAI Grok (dev); absent → AI degrades |
 | `AZURE_AI_FOUNDRY_ENDPOINT` / `AZURE_AI_FOUNDRY_API_KEY` / `FOUNDRY_MODEL` | Azure | — | Azure AI Foundry (set `LLM_PROVIDER=azure`) |
+| `DOC_STORAGE` | no | `local` | Document blob store: `local` or `r2` |
+| `DOC_LOCAL_DIR` | local | `data/uploads` | Local upload dir (a Coolify persistent volume in dev) |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | r2 | — | Cloudflare R2 (S3-compatible) credentials |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | admin@jtcgroup.com / change-me | Seeded admin login |
 | `SFOHUB_PUBLIC` | no | `0` | `1` disables login (public/demo mode) |
 | `APP_SECRET` | yes (prod) | — | Session signing secret |
@@ -309,8 +334,9 @@ python -m pytest tests/ -q
 
 ## 9. Implementation plan (phased)
 
-The repo today is the **Phase 0 + Phase 1** scaffold below — it boots, seeds, and
-demos end-to-end. Later phases are the build-out, ordered by leverage.
+The repo today implements **Phases 0–4** below — full feature parity with the
+TaxHub quality bar, deployed to `sfohub.predictivelabs.ai`. Phases 5–6 are the
+remaining build-out, ordered by leverage.
 
 **Phase 0 — Foundations (done).** Backend-neutral `Storage` (SQLite + Neo4j),
 service catalogue + cross-sell graph, FastHTML 3-pane shell with JTC look-and-feel,
@@ -321,24 +347,22 @@ with SSE streaming; hybrid cross/upsell engine (rules → graph → AI re-rank);
 synthetic SFO book + funnel seeder; analytics dashboard (heatmap, funnel,
 pipeline value); graceful degradation without an LLM.
 
-**Phase 2 — Insight & document intake.**
-- Document upload (portfolio summary, trust deed, luxury-asset inventory) →
-  Azure Blob; LLM extraction into a structured profile that feeds the engine.
-- Conversational intake wizard that *builds* a new SFO profile from chat for the
-  "new lead" user flow.
-- Persist per-recommendation **next steps**: generate a proposal PDF, book a
-  consultation (calendar integration), link to service pages.
+**Phase 2 — Insight & document intake (done).** Document upload (portfolio /
+trust deed / inventory) to Cloudflare R2 (local/Blob fallback), attached to an
+SFO; AI proposal generation per recommendation; next-step scheduling (book a
+consultation → pipeline calendar). *Remaining:* LLM extraction of uploads into a
+structured profile; a conversational intake wizard that builds a new SFO.
 
-**Phase 3 — Retrieval upgrade (mirror TaxHub).**
-- Add fastembed chunk embeddings + a vector / hybrid retriever over a JTC
-  knowledge base (service collateral, insights, benchmarks), behind the same
-  retriever interface `rag/knowledge.py` already implies — no agent change.
-- Replace keyword `search_services` with semantic search.
+**Phase 3 — Funnel & analytics depth (done).** Opportunities funnel with
+filters + inline funnel-advance; pipeline calendar with urgency; coverage matrix;
+relationship graph (vis-network); Plotly dashboard (funnel, pipeline value,
+allocation, interest heatmap, acceptance rate). *Remaining:* conversion metrics
+over time, per-RM breakdowns.
 
-**Phase 4 — Funnel & analytics depth.**
-- Conversion metrics over time, per-RM and per-service; recommendation
-  acceptance-rate tracking; Plotly charts on the dashboard (as TaxHub uses).
-- Graph-native "next best action" via `CROSS_SELLS_TO` path-scoring.
+**Phase 4 — Quality (done).** Recommendation-quality eval harness over a
+ground-truth set (`evals/`). *Remaining:* a semantic retrieval upgrade — fastembed
+chunk embeddings + vector/hybrid retriever over a JTC knowledge base, behind the
+`rag/knowledge.py` interface (no agent change), replacing keyword `search_services`.
 
 **Phase 5 — Hardening & multi-user.**
 - Role-based access (principal / advisor / sales / admin), GDPR-aligned data

@@ -31,13 +31,24 @@ engine/rules.py            transparent cross/upsell rule catalogue (edit to add 
 engine/crosssell.py        hybrid engine: rules → graph expansion → AI re-rank → persist
 rag/llm.py                 LLM client (provider switch: xai | azure)
 rag/knowledge.py           services + industry-benchmark retrieval (keyword today)
+engine/proposals.py        AI proposal-text generation per recommendation
+storage/docstore.py        document blob store: local volume / Cloudflare R2 / Azure Blob
 agents/orchestrator.py     LangGraph advisor + SSE (SYSTEM persona here)
 agents/tools.py            5 specialist agents (profile/needs/services/recommend/benchmark)
 agents/context.py          contextvar carrying the open SFO id to the tools
-web/app.py                 FastHTML app: routes, CSS (JTC palette), all UI fragments
+web/monitor.py             next-action urgency + pipeline calendar roll-ups
+web/coverage.py            SFO × service coverage matrix
+web/graphdata.py           vis-network data (book + cross-sell schema)
+web/app.py                 FastHTML multi-page app: shared Page() chrome, all routes/fragments
 tests/test_storage.py      cross-backend contract suite
+evals/                     recommendation-quality eval harness
 docs/architecture_readme.md   architecture, Azure target, phased plan
 ```
+
+Graph model: `(:SFO)` is the hub — `HOLDS_SERVICE`/`RECOMMENDED`→`(:Service)`,
+`HAS_MEMBER`→`(:Member)`, `HAS_DOCUMENT`→`(:Doc)`, `HAS_ACTION`→`(:Action)`,
+`HAS_CONVERSATION`→`(:Conversation)-[:HAS_MESSAGE]->(:Message)`; the cross-sell
+graph is `(:Service)-[:CROSS_SELLS_TO {weight}]->(:Service)`.
 
 ## Core invariants (don't break these)
 

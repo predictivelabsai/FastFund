@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 
+from datetime import date, timedelta
+
 import sfostore as store
 from rag import llm
 from engine import rules
@@ -125,3 +127,28 @@ def recommend(sfo_id: int, persist: bool = True, use_ai: bool = True) -> list[di
                 "rationale": rec["rationale"], "est_value_usd": rec["est_value_usd"],
                 "source": rec["source"]})
     return resolved
+
+
+def generate_proposal(recommendation_id: int) -> str:
+    """Draft + store an AI proposal for one persisted recommendation."""
+    from engine import proposals
+    rec = next((r for r in store.list_recommendations(limit=10000)
+                if r["id"] == recommendation_id), None)
+    if not rec:
+        return ""
+    profile = store.get_sfo(rec["sfo_id"])
+    service = store.get_service(rec["service_id"])
+    if not profile or not service:
+        return ""
+    text = proposals.draft(profile, service, rec.get("rationale") or "")
+    store.set_recommendation_proposal(recommendation_id, text)
+    return text
+
+
+def schedule_action(sfo_id: int, kind: str, title: str, due_days: int,
+                    recommendation_id: int | None = None, notes: str = "") -> int:
+    """Create a next-action due ``due_days`` from today (the pipeline calendar)."""
+    due = (date.today() + timedelta(days=due_days)).isoformat()
+    return store.upsert_next_action({
+        "sfo_id": sfo_id, "recommendation_id": recommendation_id, "kind": kind,
+        "title": title, "due_date": due, "status": "open", "notes": notes})

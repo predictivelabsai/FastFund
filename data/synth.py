@@ -135,26 +135,112 @@ def seed_funnel(sfo_ids: list[int], rng: random.Random) -> int:
     return total
 
 
+ROLES = ["principal", "spouse", "next_gen", "next_gen", "advisor"]
+DOC_TEMPLATES = [
+    ("Portfolio summary {yr}.pdf", "portfolio"),
+    ("Trust deed - {fam} Family Trust.pdf", "trust_deed"),
+    ("Luxury asset inventory.pdf", "asset_inventory"),
+    ("Consolidated report Q{q}.pdf", "report"),
+]
+# A few realistic intake→upsell scripts the advisor would have.
+CONVO_SCRIPTS = [
+    [("user", "Tell me about our family's current governance setup."),
+     ("assistant", "From your profile you have trust structures in place but no formal "
+      "governance framework, and you're now spanning {gens} generations. A family "
+      "constitution and council would give the rising generation a clear decision "
+      "framework. Shall I outline how we'd approach it?"),
+     ("user", "Yes, and what else should we be thinking about?"),
+     ("assistant", "Alongside governance, your private-equity exposure is large enough "
+      "that dedicated fund administration would reduce operational load, and JTC Edge "
+      "would give you consolidated reporting across everything. I can prepare a short "
+      "proposal for each.")],
+    [("user", "We're acquiring a yacht and some art — can you help administer them?"),
+     ("assistant", "Absolutely. Our luxury asset administration handles ownership "
+      "structuring, registration and insurance coordination for yachts, aircraft and "
+      "art. Given your existing trusts we can hold these efficiently and report them "
+      "through Edge. Would you like me to book a consultation?")],
+    [("user", "Reporting across our entities has become painful."),
+     ("assistant", "That's a common pain point as portfolios diversify. JTC Edge "
+      "consolidates multi-entity, multi-currency positions into one real-time view. "
+      "I'd pair it with our tax reporting service so compliance flows from the same "
+      "data. Shall I draft a proposal?")],
+]
+
+
+def seed_members(sfo_ids: list[int], rng: random.Random, fake) -> int:
+    n = 0
+    for sid in sfo_ids:
+        sfo = store.get_sfo(sid)
+        fam = sfo.get("family_name") or "Family"
+        size = min(sfo.get("family_size") or 4, 6)
+        for i in range(max(2, size // 2)):
+            role = ROLES[min(i, len(ROLES) - 1)]
+            gen = 1 if role in ("principal", "spouse") else rng.choice([2, 3])
+            age = rng.randint(55, 78) if gen == 1 else rng.randint(18, 45)
+            store.upsert_family_member({
+                "sfo_id": sid, "name": f"{fake.first_name()} {fam}", "role": role,
+                "generation": gen, "age": age,
+                "notes": "Active in the business" if role == "principal" else ""})
+            n += 1
+    return n
+
+
+def seed_documents(sfo_ids: list[int], rng: random.Random) -> int:
+    n = 0
+    for sid in rng.sample(sfo_ids, k=min(len(sfo_ids), max(6, len(sfo_ids) // 3))):
+        sfo = store.get_sfo(sid)
+        for tmpl, dtype in rng.sample(DOC_TEMPLATES, k=rng.randint(1, 3)):
+            name = tmpl.format(yr=2025, fam=sfo.get("family_name", "Family"),
+                               q=rng.randint(1, 4))
+            store.add_document({"sfo_id": sid, "name": name, "doc_type": dtype,
+                                "storage_key": f"seed/{sid}/{name}",
+                                "byte_size": rng.randint(80, 900) * 1024,
+                                "content_text": "", "uploaded_by": "seed"})
+            n += 1
+    return n
+
+
+def seed_actions(sfo_ids: list[int], rng: random.Random) -> int:
+    """Schedule next-actions tied to accepted/presented recommendations."""
+    from datetime import date, timedelta
+    n = 0
+    for sid in sfo_ids:
+        recs = store.list_recommendations(sfo_id=sid)
+        for r in recs:
+            if r["status"] in ("accepted", "booked"):
+                due = (date.today() + timedelta(days=rng.randint(-10, 45))).isoformat()
+                store.upsert_next_action({
+                    "sfo_id": sid, "recommendation_id": r["id"], "kind": "consultation",
+                    "title": f"Consultation — {r['service_name']}", "due_date": due,
+                    "status": "open"})
+                n += 1
+            elif r["status"] == "presented" and rng.random() < 0.5:
+                due = (date.today() + timedelta(days=rng.randint(1, 30))).isoformat()
+                store.upsert_next_action({
+                    "sfo_id": sid, "recommendation_id": r["id"], "kind": "follow_up",
+                    "title": f"Follow up — {r['service_name']}", "due_date": due,
+                    "status": "open"})
+                n += 1
+    return n
+
+
 def seed_conversations(sfo_ids: list[int], rng: random.Random) -> int:
-    """A couple of illustrative conversation logs (inquiry → upsell)."""
+    """Realistic intake→upsell conversation logs for a sample of families."""
     email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
     n = 0
-    for sid in rng.sample(sfo_ids, k=min(8, len(sfo_ids))):
+    for sid in rng.sample(sfo_ids, k=min(12, len(sfo_ids))):
         sfo = store.get_sfo(sid)
-        cid = store.create_conversation(email, sfo_id=sid,
-                                        title=f"Intro · {sfo['name']}")
-        store.add_message(cid, "user", "Tell me about our family's current governance setup.")
-        store.add_message(cid, "assistant",
-                          "Happy to. Based on your profile I can see the structures "
-                          "in place and where a formal governance framework would help "
-                          "the rising generation. Shall I outline the options?")
+        script = rng.choice(CONVO_SCRIPTS)
+        cid = store.create_conversation(email, sfo_id=sid, title=f"Intro · {sfo['name']}")
+        for role, text in script:
+            store.add_message(cid, role, text.format(gens=sfo.get("generations", 2)))
         n += 1
     return n
 
 
 def main():
     ap = argparse.ArgumentParser(description="Seed SFO Hub demo data")
-    ap.add_argument("--count", type=int, default=60, help="number of synthetic SFOs")
+    ap.add_argument("--count", type=int, default=100, help="number of synthetic SFOs")
     ap.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
     ap.add_argument("--services-only", action="store_true",
                     help="only seed the service catalogue + cross-sell graph")
@@ -169,10 +255,20 @@ def main():
         print(store.stats())
         return
 
+    from faker import Faker
+    fake = Faker()
+    Faker.seed(args.seed)
+
     ids = seed_sfos(args.count, rng)
     print(f"✓ SFOs: {len(ids)}")
+    n_mem = seed_members(ids, rng, fake)
+    print(f"✓ family members: {n_mem}")
     n_recs = seed_funnel(ids, rng)
     print(f"✓ recommendations: {n_recs}")
+    n_act = seed_actions(ids, rng)
+    print(f"✓ next actions: {n_act}")
+    n_doc = seed_documents(ids, rng)
+    print(f"✓ documents: {n_doc}")
     n_conv = seed_conversations(ids, rng)
     print(f"✓ conversations: {n_conv}")
     print(store.stats())
