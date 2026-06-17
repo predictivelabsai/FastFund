@@ -28,6 +28,31 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def week_buckets(rec_dates, conv_dates, weeks: int = 12) -> list[dict]:
+    """Bucket two lists of ISO date/datetime strings into the last ``weeks``
+    Monday-aligned weeks. Shared by both backends' ``activity_trends`` so the
+    weekly roll-up is identical regardless of store."""
+    from collections import Counter
+    from datetime import date, timedelta
+
+    def monday(s):
+        if not s:
+            return None
+        try:
+            d = datetime.fromisoformat(str(s)[:10]).date()
+        except ValueError:
+            return None
+        return d - timedelta(days=d.weekday())
+
+    today = date.today()
+    start = today - timedelta(days=today.weekday()) - timedelta(weeks=weeks - 1)
+    labels = [start + timedelta(weeks=i) for i in range(weeks)]
+    rec = Counter(m for m in map(monday, rec_dates) if m is not None)
+    conv = Counter(m for m in map(monday, conv_dates) if m is not None)
+    return [{"label": w.strftime("%d %b"), "recommendations": rec.get(w, 0),
+             "conversations": conv.get(w, 0)} for w in labels]
+
+
 class Storage(abc.ABC):
     """Backend-neutral persistence + read API for SFO Hub.
 
@@ -238,6 +263,33 @@ class Storage(abc.ABC):
     def delete_next_action(self, action_id: int) -> None:
         ...
 
+    # ── Portfolio: holdings + transactions ─────────────────────────────────
+    # Mock holdings (funds, direct deals, luxury assets) with a performance
+    # number, and cash-flow transactions (capital calls, distributions, buys).
+
+    @abc.abstractmethod
+    def add_holding(self, holding: dict) -> int:
+        """Fields: sfo_id, name, asset_class, value_usd, performance_pct, notes."""
+
+    @abc.abstractmethod
+    def list_holdings(self, sfo_id: int) -> list[dict]:
+        """Holdings for an SFO, largest value first."""
+
+    @abc.abstractmethod
+    def add_transaction(self, txn: dict) -> int:
+        """Fields: sfo_id, txn_date (ISO), kind (capital_call/distribution/buy/sell/fee),
+        amount_usd, description."""
+
+    @abc.abstractmethod
+    def list_transactions(self, sfo_id: int, limit: int = 200) -> list[dict]:
+        """Transactions for an SFO, newest first."""
+
+    # ── Demo helpers ───────────────────────────────────────────────────────
+    @abc.abstractmethod
+    def spread_demo_timestamps(self, days: int = 90) -> None:
+        """Backdate conversations + recommendations created_at across the last
+        ``days`` so activity-trend charts are realistic. Demo/seed only."""
+
     # ── Analytics (the admin/sales dashboard) ──────────────────────────────
 
     @abc.abstractmethod
@@ -254,3 +306,8 @@ class Storage(abc.ABC):
     def upsell_funnel(self) -> dict:
         """Recommendation counts by status + summed ``est_value_usd`` of the
         accepted/booked pipeline."""
+
+    @abc.abstractmethod
+    def activity_trends(self, weeks: int = 12) -> list[dict]:
+        """Weekly counts of new conversations + recommendations over the last
+        ``weeks`` (see ``week_buckets``)."""

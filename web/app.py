@@ -548,6 +548,8 @@ def sfo_detail(sess, sfo_id: int):
     members = store.list_family_members(sfo_id)
     actions = [monitor.annotate(a, date.today()) for a in store.list_next_actions(sfo_id=sfo_id)]
     docs = store.list_documents(sfo_id=sfo_id)
+    holdings = store.list_holdings(sfo_id)
+    txns = store.list_transactions(sfo_id, limit=12)
     convs = store.list_conversations(sfo_id=sfo_id, limit=10)
     mix = sfo.get("asset_mix") or {}
     donut = plotly("mix", [{"type": "pie", "hole": 0.55,
@@ -583,6 +585,23 @@ def sfo_detail(sess, sfo_id: int):
                *[Tr(Td(m["name"]), Td((m.get("role") or "").replace("_", " ").title()),
                     Td(str(m.get("generation") or "—")), Td(str(m.get("age") or "—")))
                  for m in members]) if members else P("No members recorded.", cls="kv")),
+        H2("Portfolio holdings"),
+        (Table(Tr(Th("Holding"), Th("Asset class"), Th("Value"), Th("Performance")),
+               *[Tr(Td(h["name"]), Td((h.get("asset_class") or "").replace("_", " ")),
+                    Td(money(h.get("value_usd"))),
+                    Td(Span(f"{h.get('performance_pct',0):+.1f}%",
+                            style=f"color:{'#1c7c44' if (h.get('performance_pct') or 0) >= 0 else '#c0392b'};font-weight:600")))
+                 for h in holdings]) if holdings
+         else P("No holdings recorded.", cls="kv")),
+        H2("Recent transactions"),
+        (Table(Tr(Th("Date"), Th("Type"), Th("Amount"), Th("Description")),
+               *[Tr(Td((t.get("txn_date") or "")[:10]),
+                    Td((t.get("kind") or "").replace("_", " ")),
+                    Td(Span(money(abs(t.get("amount_usd") or 0)) if (t.get("amount_usd") or 0) >= 0
+                            else f"-{money(abs(t.get('amount_usd') or 0))}",
+                            style=f"color:{'#1c7c44' if (t.get('amount_usd') or 0) >= 0 else '#c0392b'}")),
+                    Td(t.get("description"), style="color:var(--muted)"))
+                 for t in txns]) if txns else P("No transactions recorded.", cls="kv")),
         Div(H2("Recommendations"),
             Button("↻ Regenerate", cls="btn ghost sm", style="float:right",
                    hx_post=f"/recommend/{sfo_id}/page", hx_target="#recs", hx_swap="innerHTML"),
@@ -626,6 +645,86 @@ def action_done(sess, action_id: int):
     return Tr(Td("✓ done", colspan="5", style="color:var(--green)"))
 
 
+PAIN_OPTIONS = [
+    "succession planning conflict between generations",
+    "no formal governance framework",
+    "consolidated reporting complexity across entities",
+    "regulatory and AEOI (FATCA/CRS) reporting burden",
+    "fragmented banking and cash-management relationships",
+    "luxury asset (yacht/art) administration overhead",
+    "limited visibility into private-equity holdings",
+    "preparing the next generation for stewardship",
+]
+ALLOC_CLASSES = ["private_equity", "public_equity", "real_estate", "luxury", "cash", "alternatives"]
+
+
+# ── New-lead onboarding wizard ───────────────────────────────────────────────────
+@rt("/onboard", methods=["GET"])
+def onboard_form(sess):
+    if (r := require(sess)):
+        return r
+    svcs = store.list_services(limit=100)
+    domiciles = ["JE", "GG", "LU", "IE", "KY", "VG", "GB", "CH", "SG", "US", "AE"]
+    field = lambda label, inp: Div(Div(label, cls="kv", style="margin-top:10px"), inp)  # noqa: E731
+    return Page(sess, H1("New family office — onboarding"),
+        P("Capture a new lead's profile; we'll build a tailored service roadmap.",
+          style="color:var(--muted)"),
+        Form(
+            Div(field("Family office name *", Input(name="name", required="required",
+                      placeholder="e.g. Castellan Family Office", style="width:100%;padding:9px")),
+                field("Family surname", Input(name="family_name", placeholder="Castellan",
+                      style="width:100%;padding:9px")),
+                style="display:flex;gap:16px"),
+            Div(field("AUM (US$ millions) *", Input(name="aum_m", type="number", value="500",
+                      style="width:100%;padding:9px")),
+                field("Generations", Input(name="generations", type="number", value="2",
+                      style="width:100%;padding:9px")),
+                field("Family size", Input(name="family_size", type="number", value="6",
+                      style="width:100%;padding:9px")),
+                field("Domicile", Select(*[Option(d, value=d) for d in domiciles], name="domicile",
+                      style="width:100%;padding:9px")),
+                style="display:flex;gap:16px"),
+            H2("Current JTC services"),
+            Div(*[Label(Input(type="checkbox", name="services", value=s["key"]),
+                        f" {s['name']}", style="display:inline-block;width:48%;font-size:13px;margin:3px 0")
+                  for s in svcs]),
+            H2("Asset allocation (%)"),
+            Div(*[field(c.replace("_", " ").title(),
+                        Input(name=f"alloc_{c}", type="number", value="0", style="width:100%;padding:9px"))
+                  for c in ALLOC_CLASSES], style="display:flex;gap:12px;flex-wrap:wrap"),
+            H2("Pain points"),
+            Div(*[Label(Input(type="checkbox", name="pains", value=p), f" {p}",
+                        style="display:block;font-size:13px;margin:3px 0") for p in PAIN_OPTIONS]),
+            Div(Button("Build profile & roadmap", cls="btn", style="margin-top:16px"),
+                style="margin-top:8px"),
+            method="post", action="/onboard"),
+        title="Onboarding · SFO Hub", ctx="clients")
+
+
+@rt("/onboard", methods=["POST"])
+async def onboard_submit(sess, request):
+    if require(sess):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    aum = float(form.get("aum_m") or 0) * 1e6
+    mix = {c: int(form.get(f"alloc_{c}") or 0) for c in ALLOC_CLASSES
+           if int(form.get(f"alloc_{c}") or 0) > 0}
+    count = store.count_sfos()
+    sfo_id = store.upsert_sfo({
+        "client_ref": f"SFO-{count + 1000:04d}",
+        "name": form.get("name") or "New Family Office",
+        "family_name": form.get("family_name") or (form.get("name") or "").replace(" Family Office", ""),
+        "aum_usd": aum, "generations": int(form.get("generations") or 1),
+        "family_size": int(form.get("family_size") or 1), "domicile": form.get("domicile") or "JE",
+        "jurisdictions": [form.get("domicile") or "JE"],
+        "current_services": form.getlist("services"), "asset_mix": mix,
+        "pain_points": form.getlist("pains"), "stage": "lead",
+    })
+    set_active_sfo(sfo_id)
+    crosssell.recommend(sfo_id, persist=True, use_ai=True)
+    return RedirectResponse(f"/sfo/{sfo_id}", status_code=303)
+
+
 # ── Client book ────────────────────────────────────────────────────────────────
 @rt("/clients")
 def clients(sess, stage: str = ""):
@@ -649,7 +748,10 @@ def clients(sess, stage: str = ""):
                   style="color:var(--muted)"),
                Td(A("Open ↗", href=f"/sfo/{s['id']}")))
             for s in sfos]
-    return Page(sess, H1("Client book"),
+    return Page(sess,
+        Div(H1("Client book", style="display:inline-block"),
+            A("+ New family office", href="/onboard", cls="btn sm", style="float:right;margin-top:6px"),
+            style="overflow:auto"),
         P(f"{len(sfos)} family offices · click a name to advise, or Open for the full profile",
           style="color:var(--muted)"),
         filters,
@@ -770,11 +872,41 @@ def calendar(sess, urg: str = ""):
                         Td(Button("Done", cls="btn ghost sm",
                                   hx_post=f"/action/{a['id']}/done", hx_target="closest tr", hx_swap="outerHTML")))
                      for a in rows]) if rows else P("Nothing scheduled.", cls="kv"))
-    return Page(sess, H1("Pipeline calendar"),
+    return Page(sess,
+        Div(H1("Pipeline calendar", style="display:inline-block"),
+            A("📅 Subscribe / export (iCal)", href="/calendar-ics", cls="btn sm",
+              style="float:right;margin-top:6px"), style="overflow:auto"),
         P("Scheduled consultations, proposals and follow-ups across the book.", style="color:var(--muted)"),
         Div(A("All", href="/calendar", cls="urg", style="background:#6b1766;margin-right:6px"), *chips,
             style="margin:12px 0"),
         table, title="Calendar · SFO Hub", ctx="calendar")
+
+
+def _ics(actions) -> str:
+    """Build a VCALENDAR of open next-actions (all-day events)."""
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//SFO Hub//Pipeline//EN",
+             "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:SFO Hub pipeline"]
+    stamp = store.utcnow().replace("-", "").replace(":", "").split("+")[0] + "Z"
+    for a in actions:
+        d = (a.get("due_date") or "")[:10].replace("-", "")
+        if not d:
+            continue
+        title = f"{ACTION_LABELS.get(a.get('kind'), a.get('kind') or 'Action')}: {a.get('title','')}"
+        lines += ["BEGIN:VEVENT", f"UID:action-{a.get('id')}@sfohub.predictivelabs.ai",
+                  f"DTSTAMP:{stamp}", f"DTSTART;VALUE=DATE:{d}",
+                  f"SUMMARY:{title}", f"DESCRIPTION:Family: {a.get('sfo_name','')}", "END:VEVENT"]
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines)
+
+
+@rt("/calendar-ics")
+def calendar_ics(sess, sfo: int = 0):
+    if require(sess):
+        return RedirectResponse("/login", status_code=303)
+    actions = store.list_next_actions(sfo_id=sfo or None, status="open", limit=2000)
+    from starlette.responses import Response
+    return Response(content=_ics(actions), media_type="text/calendar",
+                    headers={"Content-Disposition": "attachment; filename=sfohub-pipeline.ics"})
 
 
 # ── Coverage matrix ────────────────────────────────────────────────────────────
@@ -899,8 +1031,10 @@ def documents(sess):
                Td(f"{(d.get('byte_size') or 0)//1024} kB"), Td((d.get("created_at") or "")[:10]))
             for d in docs]
     return Page(sess, H1("Documents"),
-        P("Upload portfolio summaries, trust deeds and luxury-asset inventories. "
-          "Stored in Azure Blob Storage.", style="color:var(--muted)"),
+        P("Upload portfolio summaries, trust deeds and luxury-asset inventories "
+          "(txt, csv, md or PDF). Stored in Azure Blob Storage. Attach a file to a "
+          "family and the AI extracts a profile (asset mix, pain points, services) "
+          "and refreshes their recommendations.", style="color:var(--muted)"),
         Form(Select(Option("— attach to family —", value=""),
                     *[Option(s["name"], value=str(s["id"])) for s in sfos], name="sfo_id"),
              Select(*[Option(t, value=t) for t in
@@ -925,13 +1059,19 @@ async def upload(sess, request):
     data = await f.read()
     sfo_id = int(form.get("sfo_id")) if form.get("sfo_id") else None
     key = get_docstore().put(sfo_id, f.filename, data)
-    text_preview = ""
-    if f.filename.lower().endswith((".txt", ".md", ".csv")):
-        text_preview = data[:20000].decode("utf-8", "ignore")
+    from rag import extract
+    text = extract.text_from_upload(f.filename, data)
     store.add_document({"sfo_id": sfo_id, "name": f.filename,
                         "doc_type": form.get("doc_type") or "other", "storage_key": key,
-                        "byte_size": len(data), "content_text": text_preview,
+                        "byte_size": len(data), "content_text": text[:20000],
                         "uploaded_by": user_email(sess)})
+    # Personalised insights: extract a profile from the document, update the family,
+    # and regenerate recommendations from the new picture.
+    if sfo_id and text:
+        applied = extract.apply_to_sfo(store, sfo_id, extract.extract_profile(text))
+        if applied:
+            set_active_sfo(sfo_id)
+            crosssell.recommend(sfo_id, persist=True, use_ai=True)
     return RedirectResponse(f"/sfo/{sfo_id}" if sfo_id else "/documents", status_code=303)
 
 
@@ -976,6 +1116,7 @@ def dashboard(sess):
     funnel_counts = [funnel["by_status"].get(s, 0) for s in STATUS_ORDER]
     conv = funnel["by_status"].get("accepted", 0) + funnel["by_status"].get("booked", 0)
     total_recs = sum(funnel["by_status"].values()) or 1
+    trends = store.activity_trends(12)
     stat = lambda n_, l: Div(Div(n_, cls="n"), Div(l, cls="l"), cls="stat")  # noqa: E731
     return Page(sess, H1("Analytics — cross/upsell pipeline"),
         Div(stat(str(st["sfos"]), "Family offices"),
@@ -984,6 +1125,16 @@ def dashboard(sess):
             stat(f"{round(100*conv/total_recs)}%", "Acceptance rate"),
             stat(str(dig["counts"]["overdue"]), "Overdue actions"),
             cls="statgrid"),
+        H2("Activity (last 12 weeks)"),
+        plotly("trends", [
+            {"type": "scatter", "mode": "lines+markers", "name": "Conversations",
+             "x": [t["label"] for t in trends], "y": [t["conversations"] for t in trends],
+             "line": {"color": "#6b1766"}},
+            {"type": "scatter", "mode": "lines+markers", "name": "Recommendations",
+             "x": [t["label"] for t in trends], "y": [t["recommendations"] for t in trends],
+             "line": {"color": "#ba2a84"}},
+        ], {"showlegend": True, "legend": {"orientation": "h"}, "margin": {"l": 40, "t": 10}},
+           height=260),
         Div(Div(H2("Upsell funnel"),
                 plotly("funnel", [{"type": "bar", "x": [s.title() for s in STATUS_ORDER],
                                    "y": funnel_counts, "marker": {"color": [STATUS_COLOR[s] for s in STATUS_ORDER]}}],

@@ -127,6 +127,23 @@ def test_next_actions(store):
     store.delete_next_action(aid2)
 
 
+def test_holdings_and_transactions(store):
+    sid = store.upsert_sfo({"client_ref": "H-1", "name": "Hold FO"})
+    store.add_holding({"sfo_id": sid, "name": "Aurora PE Fund III", "asset_class": "private_equity",
+                       "value_usd": 5e7, "performance_pct": 12.4})
+    store.add_holding({"sfo_id": sid, "name": "Cash", "asset_class": "cash",
+                       "value_usd": 1e7, "performance_pct": 2.0})
+    hs = store.list_holdings(sid)
+    assert [h["name"] for h in hs] == ["Aurora PE Fund III", "Cash"]  # value desc
+    store.add_transaction({"sfo_id": sid, "txn_date": "2026-05-01", "kind": "capital_call",
+                           "amount_usd": -2e6, "description": "Fund III drawdown"})
+    store.add_transaction({"sfo_id": sid, "txn_date": "2026-06-01", "kind": "distribution",
+                           "amount_usd": 3e6, "description": "Realisation"})
+    txns = store.list_transactions(sid)
+    assert txns[0]["txn_date"] == "2026-06-01"  # newest first
+    assert len(txns) == 2
+
+
 def test_proposal(store):
     sid = store.upsert_sfo({"client_ref": "P-1", "name": "Prop FO"})
     vid = store.upsert_service({"key": "gov", "name": "Governance", "category": "governance",

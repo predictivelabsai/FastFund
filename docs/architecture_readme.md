@@ -334,43 +334,53 @@ python -m pytest tests/ -q
 
 ## 9. Implementation plan (phased)
 
-The repo today implements **Phases 0–4** below — full feature parity with the
-TaxHub quality bar, deployed to `sfohub.predictivelabs.ai`. Phases 5–6 are the
-remaining build-out, ordered by leverage.
+The platform standardises on **PostgreSQL** (data) and **Azure Blob Storage**
+(documents). The repo today implements **Phases 0–4** below — deployed to
+`sfohub.predictivelabs.ai`. Phases 5–6 are the remaining build-out.
 
-**Phase 0 — Foundations (done).** Backend-neutral `Storage` (SQLite + Neo4j),
-service catalogue + cross-sell graph, FastHTML 3-pane shell with JTC look-and-feel,
-auth, Docker/Compose/Coolify ops, cross-backend contract test.
+**Phase 0 — Foundations (done).** Backend-neutral `Storage` (PostgreSQL),
+service catalogue + cross-sell graph, FastHTML shell with JTC look-and-feel, auth,
+Docker/Compose ops, storage contract test.
 
-**Phase 1 — Conversational MVP (done).** LangGraph advisor + 5 specialist agents
-with SSE streaming; hybrid cross/upsell engine (rules → graph → AI re-rank);
-synthetic SFO book + funnel seeder; analytics dashboard (heatmap, funnel,
-pipeline value); graceful degradation without an LLM.
+**Phase 1 — Conversational MVP (done).** LangGraph advisor + 6 specialist agents
+(profile, needs, services, recommend, benchmark, data) with SSE streaming; hybrid
+cross/upsell engine (rules → graph → AI re-rank); synthetic SFO book + funnel
+seeder; analytics dashboard; graceful degradation without an LLM.
 
 **Phase 2 — Insight & document intake (done).** Document upload (portfolio /
-trust deed / inventory) to Cloudflare R2 (local/Blob fallback), attached to an
-SFO; AI proposal generation per recommendation; next-step scheduling (book a
-consultation → pipeline calendar). *Remaining:* LLM extraction of uploads into a
-structured profile; a conversational intake wizard that builds a new SFO.
+trust deed / inventory) to **Azure Blob Storage**, attached to an SFO; **AI
+extraction of uploads → structured profile → refreshed recommendations** (incl.
+PDF text via pdfminer); AI proposal generation; next-step scheduling; **a new-lead
+onboarding wizard** that builds a profile from intake and produces a tailored
+service roadmap.
 
-**Phase 3 — Funnel & analytics depth (done).** Opportunities funnel with
-filters + inline funnel-advance; pipeline calendar with urgency; coverage matrix;
-relationship graph (vis-network); Plotly dashboard (funnel, pipeline value,
-allocation, interest heatmap, acceptance rate). *Remaining:* conversion metrics
-over time, per-RM breakdowns.
+**Phase 3 — Funnel & analytics depth (done).** Opportunities → **kanban pipeline**
+(drag-to-advance) with filters; pipeline calendar with urgency + **iCal export**;
+coverage matrix; relationship graph (vis-network); **portfolio holdings + cash-flow
+transactions with performance** on each SFO; Plotly dashboard (funnel, pipeline
+value, allocation, interest heatmap, acceptance rate, **activity trends over time**).
+*Remaining:* per-RM breakdowns.
 
-**Phase 4 — Quality (done).** Recommendation-quality eval harness over a
-ground-truth set (`evals/`). *Remaining:* a semantic retrieval upgrade — fastembed
-chunk embeddings + vector/hybrid retriever over a JTC knowledge base, behind the
-`rag/knowledge.py` interface (no agent change), replacing keyword `search_services`.
+**Phase 4 — Quality (done).** Text-to-SQL **data agent** + recommendation/answer
+eval harness over a ground-truth set, judged by Grok and run through the **real
+assistant** (`evals/`). *Remaining:* a semantic retrieval upgrade (embeddings +
+vector/hybrid retriever behind `rag/knowledge.py`).
 
-**Phase 5 — Hardening & multi-user.**
-- Role-based access (principal / advisor / sales / admin), GDPR-aligned data
-  handling, audit logs (the brief's compliance requirement).
-- Azure AI Foundry **Agents** as the orchestration layer (vs. local LangGraph);
-  Managed Identity for Foundry/Blob instead of keys.
+**Phase 5 — Compliance, access control & hardening (planned).** The explicit
+next step for an enterprise / production posture:
+- **Role-based access control (RBAC)** — distinct roles **principal · advisor ·
+  sales · admin**, each scoped: principals/advisors see only their family; sales
+  see the pipeline; admins see everything and manage users. Enforced in `require()`
+  + per-route guards, with the role stored on the `users` record.
+- **Audit logs** — an append-only `audit_log` (who, when, what, which SFO) for every
+  recommendation status change, proposal generation, document access and profile
+  edit; surfaced in an admin view and exportable.
+- **GDPR-aligned data handling** — data-subject export/erasure, field-level
+  retention, PII minimisation, and consent flags. (The demo is already
+  synthetic-only, so no real client data is processed.)
+- **Managed identity** — Azure Managed Identity for Blob + AI Foundry instead of
+  keys; secrets in Azure Key Vault.
 - Real CRM / JTC Edge integration behind the current mock service catalogue.
 
-**Phase 6 — Productisation.**
-- Freemium vs. premium simulation gating; demo/sales-enablement mode presets;
-  scheduled refresh of synthetic books for training scenarios.
+**Phase 6 — Productisation.** Freemium vs. premium simulation gating;
+demo/sales-enablement presets; scheduled refresh of synthetic books for training.

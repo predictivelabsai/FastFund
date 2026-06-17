@@ -179,7 +179,9 @@ class Neo4jStore(Storage):
                     "OPTIONAL MATCH (n)-[:HAS_MEMBER]->(mem:Member) "
                     "OPTIONAL MATCH (n)-[:HAS_DOCUMENT]->(d:Doc) "
                     "OPTIONAL MATCH (n)-[:HAS_ACTION]->(a:Action) "
-                    "DETACH DELETE n, c, m, mem, d, a", i=sfo_id)
+                    "OPTIONAL MATCH (n)-[:HAS_HOLDING]->(h:Holding) "
+                    "OPTIONAL MATCH (n)-[:HAS_TXN]->(x:Txn) "
+                    "DETACH DELETE n, c, m, mem, d, a, h, x", i=sfo_id)
 
     # ── Services ──────────────────────────────────────────────────────────────
     def upsert_service(self, service: dict) -> int:
@@ -414,6 +416,58 @@ class Neo4jStore(Storage):
     def delete_next_action(self, action_id: int) -> None:
         self._write("MATCH (a:Action {uid:$i}) DETACH DELETE a", i=action_id)
 
+    # ── Holdings / transactions ───────────────────────────────────────────────
+    def add_holding(self, holding: dict) -> int:
+        uid = self._next_id()
+        self._write(
+            "CREATE (h:Holding {uid:$uid, name:$name, asset_class:$ac, value_usd:$v, "
+            "performance_pct:$p, notes:$notes, created_at:$t}) "
+            "WITH h MATCH (o:SFO {uid:$sfo}) MERGE (o)-[:HAS_HOLDING]->(h)",
+            uid=uid, name=holding.get("name"), ac=holding.get("asset_class"),
+            v=holding.get("value_usd"), p=holding.get("performance_pct"),
+            notes=holding.get("notes"), t=utcnow(),
+            sfo=holding.get("sfo_id") if holding.get("sfo_id") is not None else -1)
+        return uid
+
+    def list_holdings(self, sfo_id: int) -> list[dict]:
+        rows = self._run("MATCH (o:SFO {uid:$s})-[:HAS_HOLDING]->(h:Holding) "
+                         "RETURN h ORDER BY h.value_usd DESC", s=sfo_id)
+        out = []
+        for r in rows:
+            d = dict(r["h"]); d["id"] = d.pop("uid", None); d["sfo_id"] = sfo_id
+            out.append(d)
+        return out
+
+    def add_transaction(self, txn: dict) -> int:
+        uid = self._next_id()
+        self._write(
+            "CREATE (x:Txn {uid:$uid, txn_date:$d, kind:$k, amount_usd:$a, "
+            "description:$desc, created_at:$t}) "
+            "WITH x MATCH (o:SFO {uid:$sfo}) MERGE (o)-[:HAS_TXN]->(x)",
+            uid=uid, d=txn.get("txn_date"), k=txn.get("kind"), a=txn.get("amount_usd"),
+            desc=txn.get("description"), t=utcnow(),
+            sfo=txn.get("sfo_id") if txn.get("sfo_id") is not None else -1)
+        return uid
+
+    def list_transactions(self, sfo_id: int, limit: int = 200) -> list[dict]:
+        rows = self._run("MATCH (o:SFO {uid:$s})-[:HAS_TXN]->(x:Txn) "
+                         "RETURN x ORDER BY x.txn_date DESC LIMIT $l", s=sfo_id, l=limit)
+        out = []
+        for r in rows:
+            d = dict(r["x"]); d["id"] = d.pop("uid", None); d["sfo_id"] = sfo_id
+            out.append(d)
+        return out
+
+    def spread_demo_timestamps(self, days: int = 90) -> None:
+        # Backdate created_at across the window using a per-node random offset.
+        self._write(
+            "MATCH (c:Conversation) WITH c, toInteger(rand()*$d) AS off "
+            "SET c.created_at = toString(datetime() - duration({days: off})), "
+            "c.updated_at = c.created_at", d=days)
+        self._write(
+            "MATCH ()-[r:RECOMMENDED]->() WITH r, toInteger(rand()*$d) AS off "
+            "SET r.created_at = toString(datetime() - duration({days: off}))", d=days)
+
     # ── Conversations ─────────────────────────────────────────────────────────
     def create_conversation(self, user_email: str, sfo_id: int | None = None,
                             title: str = "") -> int:
@@ -485,3 +539,10 @@ class Neo4jStore(Storage):
             "MATCH ()-[r:RECOMMENDED]->() WHERE r.status IN ['accepted','booked'] "
             "RETURN coalesce(sum(r.est_value_usd),0) AS p")[0]["p"]
         return {"by_status": by_status, "pipeline_usd": float(pipeline)}
+
+    def activity_trends(self, weeks: int = 12) -> list[dict]:
+        from .base import week_buckets
+        recs = [r["d"] for r in self._run(
+            "MATCH ()-[r:RECOMMENDED]->() RETURN r.created_at AS d")]
+        convs = [r["d"] for r in self._run("MATCH (c:Conversation) RETURN c.created_at AS d")]
+        return week_buckets(recs, convs, weeks)

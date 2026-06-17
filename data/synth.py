@@ -185,17 +185,107 @@ def seed_members(sfo_ids: list[int], rng: random.Random, fake) -> int:
     return n
 
 
+_HOLDING_NAMES = {
+    "private_equity": ["{fam} Private Equity Fund {rn}", "Project {city} (direct deal)",
+                       "Co-invest — {sector}", "Growth buyout fund {rn}"],
+    "real_estate": ["{city} commercial property", "Residential portfolio",
+                    "Logistics & industrial REIT", "Prime office asset {city}"],
+    "public_equity": ["Global equity managed account", "Developed-markets index portfolio",
+                      "Thematic equity sleeve"],
+    "luxury": ["Superyacht 'M/Y {fam}'", "Fine art collection", "Private aircraft",
+               "Classic car collection"],
+    "cash": ["Treasury / money-market", "Multi-currency deposits"],
+    "alternatives": ["Hedge fund allocation", "Private credit fund", "Infrastructure fund {rn}"],
+}
+_PERF = {"private_equity": (8, 25), "real_estate": (4, 12), "public_equity": (-5, 20),
+         "luxury": (-2, 6), "cash": (1, 4), "alternatives": (3, 15)}
+_SECTORS = ["technology", "healthcare", "industrials", "consumer", "energy transition"]
+_CITIES = ["London", "Zurich", "Singapore", "New York", "Dubai", "Geneva", "Munich"]
+_ROMAN = ["I", "II", "III", "IV", "V"]
+
+
+def seed_portfolio(sfo_ids: list[int], rng: random.Random) -> tuple[int, int]:
+    """Holdings (correlated with asset_mix × AUM, with performance) + cash-flow txns."""
+    from datetime import date, timedelta
+    nh = nt = 0
+    for sid in sfo_ids:
+        sfo = store.get_sfo(sid)
+        aum = float(sfo.get("aum_usd") or 0)
+        mix = sfo.get("asset_mix") or {}
+        for ac, pct in mix.items():
+            if not pct or ac not in _HOLDING_NAMES:
+                continue
+            class_value = aum * pct / 100.0
+            k = 1 if pct < 12 else rng.randint(2, 3)
+            names = rng.sample(_HOLDING_NAMES[ac], k=min(k, len(_HOLDING_NAMES[ac])))
+            shares = [rng.random() for _ in names]
+            tot = sum(shares) or 1
+            lo, hi = _PERF[ac]
+            for nm, sh in zip(names, shares):
+                name = nm.format(fam=sfo.get("family_name", "Family"),
+                                 rn=rng.choice(_ROMAN), city=rng.choice(_CITIES),
+                                 sector=rng.choice(_SECTORS))
+                store.add_holding({
+                    "sfo_id": sid, "name": name, "asset_class": ac,
+                    "value_usd": round(class_value * sh / tot, -4),
+                    "performance_pct": round(rng.uniform(lo, hi), 1)})
+                nh += 1
+        for _ in range(rng.randint(3, 7)):
+            kind = rng.choice(["capital_call", "distribution", "buy", "sell", "fee"])
+            mag = aum * rng.uniform(0.002, 0.03)
+            amt = -mag if kind in ("capital_call", "buy", "fee") else mag
+            d = (date.today() - timedelta(days=rng.randint(5, 360))).isoformat()
+            store.add_transaction({
+                "sfo_id": sid, "txn_date": d, "kind": kind, "amount_usd": round(amt, -3),
+                "description": {"capital_call": "PE fund drawdown",
+                                "distribution": "Fund realisation / distribution",
+                                "buy": "Direct investment", "sell": "Asset disposal",
+                                "fee": "Management & admin fees"}[kind]})
+            nt += 1
+    return nh, nt
+
+
+def _doc_text(sfo: dict, dtype: str) -> str:
+    fam = sfo.get("family_name", "Family")
+    aum = (sfo.get("aum_usd") or 0) / 1e6
+    mix = ", ".join(f"{k.replace('_',' ')} {v}%" for k, v in (sfo.get("asset_mix") or {}).items() if v)
+    if dtype == "trust_deed":
+        return (f"DEED OF TRUST\n\nThe {fam} Family Trust\n\nThis settlement is made between the "
+                f"Settlor (the {fam} family) and the Trustee, JTC, governed by the laws of "
+                f"{sfo.get('domicile','Jersey')}. The trust fund is held for the benefit of the "
+                f"beneficiaries across {sfo.get('generations',2)} generations. Standard "
+                f"administrative, investment and distribution powers apply.")
+    if dtype == "asset_inventory":
+        return (f"LUXURY ASSET INVENTORY — {fam} Family Office\n\nSchedule of passion and luxury "
+                f"assets held: superyacht, fine art collection, private aircraft and classic "
+                f"vehicles. Each asset requires ownership structuring, registration and insurance "
+                f"coordination. Estimated luxury allocation per the latest portfolio summary.")
+    # portfolio / report
+    return (f"PORTFOLIO SUMMARY — {fam} Family Office\n\nAssets under management: "
+            f"approximately ${aum:,.0f}M across {sfo.get('generations',2)} generations.\n"
+            f"Asset allocation: {mix}.\nKey pain points noted: "
+            f"{'; '.join(sfo.get('pain_points') or []) or 'n/a'}.\n"
+            f"Current JTC services: {', '.join(sfo.get('current_services') or []) or 'none'}.")
+
+
 def seed_documents(sfo_ids: list[int], rng: random.Random) -> int:
+    """Write ACTUAL fake document files into the doc store (downloadable demos)."""
+    from storage.docstore import get_docstore
+    ds = get_docstore()
     n = 0
     for sid in rng.sample(sfo_ids, k=min(len(sfo_ids), max(6, len(sfo_ids) // 3))):
         sfo = store.get_sfo(sid)
         for tmpl, dtype in rng.sample(DOC_TEMPLATES, k=rng.randint(1, 3)):
             name = tmpl.format(yr=2025, fam=sfo.get("family_name", "Family"),
-                               q=rng.randint(1, 4))
+                               q=rng.randint(1, 4)).replace(".pdf", ".txt")
+            body = _doc_text(sfo, dtype).encode()
+            try:
+                key = ds.put(sid, name, body)
+            except Exception:  # noqa: BLE001 — fall back to a metadata key
+                key = f"seed/{sid}/{name}"
             store.add_document({"sfo_id": sid, "name": name, "doc_type": dtype,
-                                "storage_key": f"seed/{sid}/{name}",
-                                "byte_size": rng.randint(80, 900) * 1024,
-                                "content_text": "", "uploaded_by": "seed"})
+                                "storage_key": key, "byte_size": len(body),
+                                "content_text": body.decode(), "uploaded_by": "seed"})
             n += 1
     return n
 
@@ -251,8 +341,10 @@ def run_seed(count: int = 100, seed: int = 42) -> dict:
     seed_members(ids, rng, fake)
     seed_funnel(ids, rng)
     seed_actions(ids, rng)
+    seed_portfolio(ids, rng)
     seed_documents(ids, rng)
     seed_conversations(ids, rng)
+    store.spread_demo_timestamps(90)
     return store.stats()
 
 
@@ -297,10 +389,14 @@ def main():
     print(f"✓ recommendations: {n_recs}")
     n_act = seed_actions(ids, rng)
     print(f"✓ next actions: {n_act}")
+    nh, nt = seed_portfolio(ids, rng)
+    print(f"✓ holdings: {nh} · transactions: {nt}")
     n_doc = seed_documents(ids, rng)
     print(f"✓ documents: {n_doc}")
     n_conv = seed_conversations(ids, rng)
     print(f"✓ conversations: {n_conv}")
+    store.spread_demo_timestamps(90)
+    print("✓ backdated demo timestamps")
     print(store.stats())
 
 

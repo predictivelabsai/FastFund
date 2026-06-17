@@ -17,6 +17,8 @@ pyyaml==6.0.3
 bcrypt==4.3.0
 # Document storage on Cloudflare R2 (S3-compatible) / Azure Blob
 boto3==1.35.99
+# Uploaded-document text extraction (portfolio summaries, trust deeds)
+pdfminer.six==20240706
 # Synthetic demo data
 faker==30.8.2
 # Testing

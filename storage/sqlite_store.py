@@ -88,6 +88,14 @@ class SqliteStore(Storage):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sfo_id INTEGER, recommendation_id INTEGER, kind TEXT, title TEXT,
                 due_date TEXT, status TEXT DEFAULT 'open', notes TEXT, created_at TEXT)""",
+            """CREATE TABLE IF NOT EXISTS holdings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sfo_id INTEGER, name TEXT, asset_class TEXT, value_usd REAL,
+                performance_pct REAL, notes TEXT, created_at TEXT)""",
+            """CREATE TABLE IF NOT EXISTS transactions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sfo_id INTEGER, txn_date TEXT, kind TEXT, amount_usd REAL,
+                description TEXT, created_at TEXT)""",
             """CREATE TABLE IF NOT EXISTS conversations(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_email TEXT, sfo_id INTEGER, title TEXT,
@@ -457,6 +465,54 @@ class SqliteStore(Storage):
         with self._conn() as c:
             c.execute(text("DELETE FROM next_actions WHERE id=:i"), {"i": action_id})
 
+    # ── Holdings / transactions ─────────────────────────────────────────────
+    def add_holding(self, holding: dict) -> int:
+        params = {"sfo_id": holding.get("sfo_id"), "name": holding.get("name"),
+                  "asset_class": holding.get("asset_class"), "value_usd": holding.get("value_usd"),
+                  "performance_pct": holding.get("performance_pct"),
+                  "notes": holding.get("notes"), "created_at": utcnow()}
+        with self._conn() as c:
+            keys = ",".join(params)
+            vals = ",".join(f":{k}" for k in params)
+            c.execute(text(f"INSERT INTO holdings({keys}) VALUES({vals})"), params)
+            return c.execute(text("SELECT id FROM holdings ORDER BY id DESC LIMIT 1")).first()[0]
+
+    def list_holdings(self, sfo_id: int) -> list[dict]:
+        with self.engine.connect() as c:
+            return [self._row(r) for r in c.execute(text(
+                "SELECT * FROM holdings WHERE sfo_id=:s ORDER BY value_usd DESC"), {"s": sfo_id})]
+
+    def add_transaction(self, txn: dict) -> int:
+        params = {"sfo_id": txn.get("sfo_id"), "txn_date": txn.get("txn_date"),
+                  "kind": txn.get("kind"), "amount_usd": txn.get("amount_usd"),
+                  "description": txn.get("description"), "created_at": utcnow()}
+        with self._conn() as c:
+            keys = ",".join(params)
+            vals = ",".join(f":{k}" for k in params)
+            c.execute(text(f"INSERT INTO transactions({keys}) VALUES({vals})"), params)
+            return c.execute(text("SELECT id FROM transactions ORDER BY id DESC LIMIT 1")).first()[0]
+
+    def list_transactions(self, sfo_id: int, limit: int = 200) -> list[dict]:
+        with self.engine.connect() as c:
+            return [self._row(r) for r in c.execute(text(
+                "SELECT * FROM transactions WHERE sfo_id=:s ORDER BY txn_date DESC LIMIT :l"),
+                {"s": sfo_id, "l": limit})]
+
+    def spread_demo_timestamps(self, days: int = 90) -> None:
+        # Backdate created_at/updated_at across the window (SQLite + Postgres compatible).
+        with self._conn() as c:
+            for tbl, cols in (("conversations", ("created_at", "updated_at")),
+                              ("recommendations", ("created_at",))):
+                for col in cols:
+                    if self._is_sqlite:
+                        c.execute(text(
+                            f"UPDATE {tbl} SET {col} = datetime('now', '-' || "
+                            f"CAST(abs(random()) % :d AS TEXT) || ' days')"), {"d": days})
+                    else:
+                        c.execute(text(
+                            f"UPDATE {tbl} SET {col} = NOW() - (floor(random()*:d) || ' days')::interval"),
+                            {"d": days})
+
     # ── Conversations ──────────────────────────────────────────────────────
     def create_conversation(self, user_email: str, sfo_id: int | None = None,
                             title: str = "") -> int:
@@ -528,3 +584,10 @@ class SqliteStore(Storage):
                 "SELECT COALESCE(SUM(est_value_usd),0) FROM recommendations"
                 " WHERE status IN ('accepted','booked')")).scalar() or 0.0
             return {"by_status": by_status, "pipeline_usd": float(pipeline)}
+
+    def activity_trends(self, weeks: int = 12) -> list[dict]:
+        from .base import week_buckets
+        with self.engine.connect() as c:
+            recs = [r[0] for r in c.execute(text("SELECT created_at FROM recommendations"))]
+            convs = [r[0] for r in c.execute(text("SELECT created_at FROM conversations"))]
+        return week_buckets(recs, convs, weeks)
