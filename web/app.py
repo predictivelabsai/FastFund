@@ -900,7 +900,7 @@ def documents(sess):
             for d in docs]
     return Page(sess, H1("Documents"),
         P("Upload portfolio summaries, trust deeds and luxury-asset inventories. "
-          f"Stored via {os.environ.get('DOC_STORAGE','local')}.", style="color:var(--muted)"),
+          "Stored in Azure Blob Storage.", style="color:var(--muted)"),
         Form(Select(Option("— attach to family —", value=""),
                     *[Option(s["name"], value=str(s["id"])) for s in sfos], name="sfo_id"),
              Select(*[Option(t, value=t) for t in
@@ -1057,19 +1057,19 @@ AGENTS_TABLE = [
 _MERMAID = {
     "System overview": """flowchart TB
   USER([SFO principal / advisor / sales team])
-  subgraph APP[FastHTML app · Coolify port 5021]
+  subgraph APP[FastHTML app · Azure Container Apps]
     UI[3-pane UI + multi-page views]
     ORCH[LangGraph orchestrator · SSE]
     ENGINE[Hybrid cross/upsell engine]
     STORE[Storage interface]
   end
   LLM[[OpenAI-compatible LLM<br/>xAI Grok dev → Azure AI Foundry prod]]
-  DB[(SQLite / Postgres · Neo4j AuraDB target)]
-  R2[(Cloudflare R2 · documents)]
+  DB[(PostgreSQL)]
+  BLOB[(Azure Blob Storage · documents)]
   USER -->|HTTPS| UI --> ORCH --> ENGINE --> STORE --> DB
   ORCH --> STORE
   ORCH --> LLM
-  UI --> R2""",
+  UI --> BLOB""",
     "Agent orchestration": """flowchart TB
   MSG([User message + open SFO context]) --> ORCH{{Orchestrator · LangGraph react-agent · Grok}}
   ORCH --> P[profile_agent]
@@ -1083,22 +1083,23 @@ _MERMAID = {
   R --> EN[Hybrid engine] --> ST
   N --> KB[Services + benchmarks]
   B --> KB
-  D --> SQL[(SQL)]
+  D --> SQL[(PostgreSQL)]
   ORCH -->|composed cited answer · SSE| OUT([Reply + markers])""",
     "Hybrid recommendation engine": """flowchart LR
   P([SFO profile]) --> RULES[1 Rule catalogue] --> GRAPH[2 Graph expansion]
-  GRAPH --> AI[3 AI re-rank + rationale] --> VAL[4 Estimated value] --> DB[(5 Persist RECOMMENDED)]
+  GRAPH --> AI[3 AI re-rank + rationale] --> VAL[4 Estimated value] --> DB[(5 Persist · PostgreSQL)]
   DB --> UI([Cards · proposals · kanban])
   AI -.no LLM key.-> DEG[Degrade: rule/graph scores]""",
     "Data agent — text-to-SQL + evals": """flowchart TB
   Q([How many family offices over $1bn?]) --> GEN[LLM generates SQL · SELECT-only]
-  GEN --> EXEC[(Execute on SQL)] --> FMT[Format answer] --> A([41 family offices over $1bn])
+  GEN --> EXEC[(Execute on PostgreSQL)] --> FMT[Format answer] --> A([41 family offices over $1bn])
   GT[(ground_truth.csv)] --> RUN[run via assistant or sql] --> JUDGE[deepeval GEval · Grok] --> SC([PASS/FAIL])
   A -.tested by.-> RUN""",
     "Deployment & CI/CD": """flowchart LR
-  DEV[git push main] --> GH[GitHub Actions] -->|deploy webhook| COOL[Coolify]
-  COOL --> BUILD[Docker build · port 5021] --> RUN[Rolling update · /health] --> LIVE([sfohub.predictivelabs.ai])
-  LIVE --> R2[(Cloudflare R2)]
+  DEV[git push main] --> GH[GitHub Actions] -->|deploy webhook| HOST[Azure Container Apps]
+  HOST --> BUILD[Docker build · port 5021] --> RUN[Rolling update · /health] --> LIVE([sfohub.predictivelabs.ai])
+  LIVE --> BLOB[(Azure Blob Storage)]
+  LIVE --> DB[(PostgreSQL)]
   LIVE --> GROK[[xAI Grok / Azure AI Foundry]]""",
 }
 
@@ -1140,9 +1141,10 @@ def technical_guide(sess):
         H2("Stack"),
         Ul(Li("FastHTML multi-page app (this UI), uvicorn, port 5021."),
            Li("LangGraph tool-calling advisor over 6 specialist agents; SSE streaming."),
-           Li("Backend-neutral Storage: SQLite·Postgres (live) / Neo4j AuraDB (target)."),
+           Li("Data store: PostgreSQL (backend-neutral Storage interface)."),
+           Li("Documents: Azure Blob Storage."),
            Li("OpenAI-compatible LLM: xAI Grok (dev) → Azure AI Foundry (prod)."),
-           Li("Documents on Cloudflare R2; deploy via GitHub Actions → Coolify.")),
+           Li("Deploy via GitHub Actions → Azure Container Apps.")),
         H2("The six specialist agents"),
         Table(Tr(Th("Agent"), Th("Job")),
               *[Tr(Td(B(n)), Td(d)) for n, d in AGENTS_TABLE]),

@@ -5,8 +5,9 @@ The AI conversational advisor for cross-selling/upselling to single family offic
 orchestrator, its specialist agents, the hybrid recommendation engine, the
 text-to-SQL data agent, and how the whole system is wired and deployed.
 
-Rendered diagrams live in [`docs/diagrams/`](diagrams/); a slide deck is at
-[`docs/technical_architecture_slides.pdf`](technical_architecture_slides.pdf).
+The platform standardises on **PostgreSQL** for data and **Azure Blob Storage**
+for documents. Rendered diagrams live in [`docs/diagrams/`](diagrams/); a slide
+deck is at [`docs/technical_architecture_slides.pdf`](technical_architecture_slides.pdf).
 
 ---
 
@@ -14,21 +15,21 @@ Rendered diagrams live in [`docs/diagrams/`](diagrams/); a slide deck is at
 
 A single FastHTML app serves the 3-pane advisor UI and routes every chat message
 to a LangGraph tool-calling orchestrator. The orchestrator calls specialist
-agents, which read/write the backend-neutral store and call an OpenAI-compatible
-LLM. Documents go to Cloudflare R2.
+agents, which read/write **PostgreSQL** and call an OpenAI-compatible LLM.
+Documents are stored in **Azure Blob Storage**.
 
 ```mermaid
 flowchart TB
     USER(["SFO principal / advisor / sales team"])
-    subgraph APP["FastHTML app (Coolify · port 5021)"]
+    subgraph APP["FastHTML app (Azure Container Apps)"]
         UI["3-pane UI + multi-page views<br/>advisor · pipeline kanban · dashboard · clients"]
         ORCH["LangGraph orchestrator<br/>(create_react_agent, SSE streaming)"]
         ENGINE["Hybrid cross/upsell engine"]
         STORE["Storage interface"]
     end
     LLM[["OpenAI-compatible LLM<br/>xAI Grok (dev) → Azure AI Foundry (prod)"]]
-    DB[("SQLite / Postgres<br/>(Neo4j AuraDB target)")]
-    R2[("Cloudflare R2<br/>documents")]
+    DB[("PostgreSQL")]
+    BLOB[("Azure Blob Storage<br/>documents")]
 
     USER -->|HTTPS| UI
     UI -->|/chat SSE| ORCH
@@ -37,7 +38,7 @@ flowchart TB
     ENGINE --> STORE
     ORCH -->|tokens + tool steps| LLM
     STORE --> DB
-    UI -->|upload / fetch| R2
+    UI -->|upload / fetch| BLOB
 ```
 
 ---
@@ -73,7 +74,7 @@ flowchart TB
     STORE[("Storage")]
     ENGINE["Hybrid engine"]
     KB["Services + benchmarks"]
-    SQL["SQLite/Postgres"]
+    SQL[("PostgreSQL")]
     PROFILE --> STORE
     NEEDS --> KB
     SERVICES --> STORE
@@ -107,7 +108,7 @@ flowchart LR
     RULES --> GRAPH["2 · Graph expansion<br/>CROSS_SELLS_TO partners"]
     GRAPH --> AI["3 · AI re-rank + rationale<br/>(tagged nested_llm)"]
     AI --> VALUE["4 · Estimated value<br/>AUM × tier bps"]
-    VALUE --> PERSIST[("5 · Persist<br/>RECOMMENDED rows")]
+    VALUE --> PERSIST[("5 · Persist<br/>recommendations · PostgreSQL")]
     PERSIST --> UI(["Ranked cards · proposals · pipeline kanban"])
     AI -. "no LLM key" .-> DEGRADE["Degrade: rule/graph scores stand"]
 ```
@@ -117,16 +118,16 @@ flowchart LR
 ## 4. Data agent — text-to-SQL + evals
 
 The `data_agent` answers quantitative, book-wide questions by generating a
-read-only SQL `SELECT` over the relational schema, executing it, and formatting
-the result. An eval harness scores answers against a ground-truth set with a
-deepeval GEval correctness metric judged by Grok — run against the **real
+read-only SQL `SELECT` over the **PostgreSQL** schema, executing it, and
+formatting the result. An eval harness scores answers against a ground-truth set
+with a deepeval GEval correctness metric judged by Grok — run against the **real
 assistant** (full orchestrator), not just the engine.
 
 ```mermaid
 flowchart TB
     Q(["Question: 'how many family offices over $1bn?'"])
     Q --> GEN["LLM generates SQL<br/>(schema-grounded, SELECT-only guard)"]
-    GEN --> EXEC[("Execute on SQLite/Postgres")]
+    GEN --> EXEC[("Execute on PostgreSQL")]
     EXEC --> FMT["Format answer"]
     FMT --> A(["'41 family offices have AUM over $1bn'"])
 
@@ -141,39 +142,43 @@ flowchart TB
 
 ---
 
-## 5. Data & graph model
+## 5. Data model
 
-`(:SFO)` is the hub. The relational store mirrors the same shape as tables; the
-Neo4j target uses first-class edges (`CROSS_SELLS_TO`, `RECOMMENDED`).
+`(:SFO)` is the hub. Stored in **PostgreSQL** as related tables; the entity
+relationships are:
 
 ```mermaid
 graph LR
-    O["(:SFO)"] -- HOLDS_SERVICE --> SV["(:Service)"]
-    O -- "RECOMMENDED {kind,score,status}" --> SV
-    O -- HAS_MEMBER --> M["(:Member)"]
-    O -- HAS_DOCUMENT --> D["(:Doc)"]
-    O -- HAS_ACTION --> ACT["(:Action)"]
-    O -- HAS_CONVERSATION --> C["(:Conversation)"]
-    C -- HAS_MESSAGE --> MSG["(:Message)"]
-    SV -- "CROSS_SELLS_TO {weight}" --> SV
+    O["SFO"] -- holds_service --> SV["Service"]
+    O -- "recommended {kind,score,status}" --> SV
+    O -- has_member --> M["Member"]
+    O -- has_document --> D["Doc (Azure Blob)"]
+    O -- has_action --> ACT["Action"]
+    O -- has_conversation --> C["Conversation"]
+    C -- has_message --> MSG["Message"]
+    SV -- "cross_sells_to {weight}" --> SV
 ```
+
+Document rows record metadata + the Blob storage key; the file bytes live in
+**Azure Blob Storage**.
 
 ---
 
 ## 6. Deployment & CI/CD
 
-Push to `main` → GitHub Actions → Coolify deploy webhook (`force=true`) → Docker
-build + rolling update behind Cloudflare. Documents in R2; the LLM is xAI Grok in
-dev, Azure AI Foundry the production target.
+Push to `main` → GitHub Actions → deploy webhook → container build + rolling
+update. Data in **PostgreSQL**, documents in **Azure Blob Storage**; the LLM is
+xAI Grok in dev, **Azure AI Foundry** the production target.
 
 ```mermaid
 flowchart LR
     DEV["git push main"] --> GH["GitHub Actions<br/>deploy.yml"]
-    GH -->|"/api/v1/deploy webhook"| COOL["Coolify<br/>(JTCGroup project)"]
-    COOL --> BUILD["Docker build<br/>Dockerfile · port 5021"]
+    GH -->|"deploy webhook"| HOST["Container platform<br/>(Azure Container Apps)"]
+    HOST --> BUILD["Docker build<br/>Dockerfile · port 5021"]
     BUILD --> RUN["Rolling update<br/>healthcheck /health"]
-    RUN --> LIVE(["sfohub.predictivelabs.ai<br/>behind Cloudflare"])
-    LIVE --> R2[("Cloudflare R2")]
+    RUN --> LIVE(["sfohub.predictivelabs.ai"])
+    LIVE --> BLOB[("Azure Blob Storage")]
+    LIVE --> DB[("PostgreSQL")]
     LIVE --> GROK[["xAI Grok / Azure AI Foundry"]]
 ```
 
@@ -187,7 +192,7 @@ sequenceDiagram
     participant W as FastHTML /chat
     participant O as Orchestrator (Grok)
     participant T as Specialist agent
-    participant S as Store / SQL / engine
+    participant S as PostgreSQL / engine
     U->>W: message (SSE)
     W->>O: astream_events(messages)
     O->>T: tool call (e.g. recommend_agent / data_agent)
