@@ -237,7 +237,7 @@ def plotly(div_id, data, layout):
 @rt("/login", methods=["GET"])
 def login_form(sess, error: str = ""):
     return Title("Sign in · SFO Hub"), CSS, Form(
-        H2("SFO Hub"), P("SFO Private Office AI Advisor", style="color:#6b7686"),
+        H2("SFO Hub"), P("Single-Family Office (SFO) AI Advisor", style="color:#6b7686"),
         (P(error, style="color:#c0392b") if error else ""),
         Input(name="email", placeholder="Email", type="email"),
         Input(name="password", placeholder="Password", type="password"),

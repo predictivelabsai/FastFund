@@ -195,6 +195,15 @@ Runtime config (Coolify env vars):
   persistent volume.
 - `LLM_PROVIDER=xai` with the shared xAI Grok key.
 
+**CI/CD (GitHub Actions → Coolify).** Mirrors taxhub. `.github/workflows/deploy.yml`
+fires on push to `main` and GETs the Coolify deploy webhook
+(`/api/v1/deploy?uuid=m6tvmt29dvto7uuitmdx8q7t`) with a deploy-scoped API token.
+Repo secrets: `COOLIFY_WEBHOOK_URL`, `COOLIFY_TOKEN` (values in `.secrets/`).
+So a normal `git push origin main` auto-deploys; trigger manually with:
+```bash
+curl -X GET "$COOLIFY_WEBHOOK_URL" -H "Authorization: Bearer $COOLIFY_TOKEN"
+```
+
 Post-deploy smoke test:
 ```bash
 B=https://sfohub.predictivelabs.ai
