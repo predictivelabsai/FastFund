@@ -110,6 +110,9 @@ display:flex;align-items:center;justify-content:space-between;gap:10px}
 .toolchip{display:inline-block;font-size:11px;background:#f3ecf3;color:var(--navy2);border:1px solid #e0cfe0;
 border-radius:20px;padding:1px 9px;margin:2px 4px 2px 0}
 .cards{display:flex;flex-wrap:wrap;gap:8px;padding:8px 22px}
+.cards-tray{border-top:1px solid var(--line);background:#fbfcfd;padding:6px 22px 12px}
+.cards-tray .cards{padding:4px 0}
+.cards-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:2px 0}
 .scard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:12.5px;
 cursor:pointer;max-width:340px}.scard:hover{border-color:var(--accent);color:var(--navy)}
 .composer{padding:14px 22px;border-top:1px solid var(--line);background:#fff;display:flex;gap:10px}
@@ -144,7 +147,8 @@ th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase
 .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:16px 0}
 .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px}
 .stat .n{font-size:26px;font-weight:700;color:var(--navy)}.stat .l{color:var(--muted);font-size:12px}
-.cardrow{display:flex;gap:20px;flex-wrap:wrap}.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;flex:1;min-width:300px}
+.cardrow{display:flex;gap:20px;flex-wrap:wrap}.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;flex:1 1 340px;min-width:320px;max-width:100%;overflow:hidden}
+.card .js-plotly-plot,.card .plot-container{max-width:100%}
 .matrix td,.matrix th{padding:5px 7px;font-size:11.5px;text-align:center}
 .matrix th.sfo,.matrix td.sfo{text-align:left;position:sticky;left:0;background:#fff;font-weight:600;max-width:200px}
 .cell{display:inline-block;width:16px;height:16px;border-radius:4px}
@@ -223,14 +227,20 @@ def urgency_badge(urg):
                 style=f"background:{monitor.URGENCY_COLOR.get(urg, '#7a7a85')}")
 
 
-def plotly(div_id, data, layout):
-    base = {"margin": {"t": 24, "r": 10, "b": 36, "l": 40}, "font": {"size": 12},
-            "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)",
+def plotly(div_id, data, layout, height=300):
+    # autosize lets Plotly size to the (flex-shrunk) container; we also resize
+    # after layout settles so charts never render wider than their card.
+    base = {"margin": {"t": 24, "r": 12, "b": 40, "l": 48}, "font": {"size": 12},
+            "autosize": True, "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)",
             "colorway": ["#6b1766", "#ba2a84", "#9c5797", "#b06b00", "#1c7c44", "#c9a3c6"]}
     base.update(layout)
-    return Div(Div(id=div_id, style="height:280px"),
-               Script(f"Plotly.newPlot('{div_id}',{json.dumps(data)},"
-                      f"{json.dumps(base)},{{displayModeBar:false,responsive:true}});"))
+    base.pop("height", None)  # height comes from the div, not the layout (avoids overflow)
+    return Div(Div(id=div_id, style=f"width:100%;height:{height}px"),
+               Script(f"(function(){{var el=document.getElementById('{div_id}');"
+                      f"Plotly.newPlot(el,{json.dumps(data)},{json.dumps(base)},"
+                      f"{{displayModeBar:false,responsive:true}}).then(function(){{"
+                      f"Plotly.Plots.resize(el);setTimeout(function(){{Plotly.Plots.resize(el);}},80);}});"
+                      f"window.addEventListener('resize',function(){{Plotly.Plots.resize(el);}});}})();"))
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
@@ -404,21 +414,39 @@ document.addEventListener('keydown',e=>{ if(e.target.id==='box'&&e.key==='Enter'
 """.replace("__SFO__", sfo_q))
 
 
+def _suggestions(sfo_id):
+    """The standard prompts, plus a few that name real families from the book so
+    the demo feels concrete."""
+    base = list(SUGGESTIONS)
+    sfos = store.list_sfos(limit=12)
+    if sfo_id is None and sfos:
+        picks = sfos[:3]
+        templates = ["Summarise {n}", "What should we offer {n} next?",
+                     "Where are the gaps for {n}?"]
+        named = [t.format(n=p["name"]) for t, p in zip(templates, picks)]
+        return base + named
+    return base
+
+
 @rt("/")
 def index(sess, sfo: int = 0):
     if (r := require(sess)):
         return r
     sfo_id = sfo or None
-    greeting = ("Hello — I'm your JTC Private Office advisor. Open a family office "
-                "from the client book and ask me anything: their setup, where the "
-                "gaps are, and what we should offer them next.")
+    greeting = ("Hello — I'm your Single-Family Office advisor. Open a family from "
+                "the client book and ask me anything: their setup, where the gaps "
+                "are, and what we should offer them next.")
+    cards = Div(Div("Try asking", cls="cards-label"),
+                Div(*[Div(s, cls="scard", onclick=f"sfoSet({s!r})")
+                      for s in _suggestions(sfo_id)], cls="cards"),
+                cls="cards-tray")
     return (Title("SFO Hub"), CSS,
             Div(left_pane(sess, sfo_id, ctx="home"),
                 Div(Div("AI Assistant", cls="chead"),
                     Div(Div(greeting, cls="bubble assistant"), cls="msgs", id="msgs"),
-                    Div(*[Div(s, cls="scard", onclick=f"sfoSet({s!r})") for s in SUGGESTIONS], cls="cards"),
                     Div(Textarea(placeholder="Message the advisor…", id="box", name="q"),
                         Button("Send", onclick="sfoSend()"), cls="composer"),
+                    cards,
                     cls="pane center"),
                 right_pane(sfo_id), cls="app"),
             Script(f"window.__sfoid={sfo_id if sfo_id else 'null'};"), chat_script(sfo_id))
@@ -890,7 +918,7 @@ def dashboard(sess):
                                  "y": [h["name"] for h in reversed(heat)],
                                  "x": [h["count"] for h in reversed(heat)],
                                  "marker": {"color": "#ba2a84"}}],
-                       {"margin": {"l": 200}, "height": 320}), cls="card"),
+                       {"margin": {"l": 210}}, height=360), cls="card"),
             cls="cardrow"),
         H2("Clients by stage"),
         Table(Tr(Th("Stage"), Th("Count")),
