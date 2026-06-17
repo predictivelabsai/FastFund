@@ -177,6 +177,31 @@ docker compose --profile neo4j up -d           # optional bundled Neo4j (else us
 Compose carries `coolify.managed` / `coolify.port=5021` labels; front with
 Cloudflare as TaxHub does.
 
+### Live deployment (Coolify — current)
+
+Deployed to **https://sfohub.predictivelabs.ai** on `coolify.predictivelabs.ai`,
+project **JTCGroup**, resource **sfohub** (Dockerfile build pack, port 5021,
+auto-deploys on push to `main` via the `sfohub-deploy-key` deploy key). Demo login
+is the seeded admin (`admin@jtcgroup.com`); the auth gate is the site's password.
+
+Runtime config (Coolify env vars):
+- `DATA_STORAGE=sqlite` on the container — **not** AuraDB. AuraDB Free was
+  unavailable (the account's one free slot is held by `taxhub`; only paid
+  Professional ~$259/mo is creatable). Switching later is a one-line env change
+  (`DATA_STORAGE=neo4j` + the four `NEO4J_*`) — no code change.
+- `DOC_STORAGE=r2` → Cloudflare R2 bucket `sfohub-docs`.
+- `SFOHUB_AUTOSEED=1` → the app self-seeds 100 SFOs on boot when the DB is empty
+  (`data.synth.autoseed_if_empty`), so the demo survives redeploys without a
+  persistent volume.
+- `LLM_PROVIDER=xai` with the shared xAI Grok key.
+
+Post-deploy smoke test:
+```bash
+B=https://sfohub.predictivelabs.ai
+curl -sS $B/health                                   # {"status":"ok"}
+curl -so/dev/null -w "%{http_code}\n" $B/             # 303 -> /login (auth gate)
+```
+
 ### Microsoft Azure (production target)
 
 Azure Container Apps + Azure AI Foundry + managed Neo4j AuraDB + Key Vault + ACR.
