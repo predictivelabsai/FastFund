@@ -233,3 +233,7 @@ data/uploads/
 evals/eval-results-*.csv
 evals/eval-comparison-*.csv
 .deepeval*
+
+# User-guide build temp
+tmp_ug_slides/
+help-check.png

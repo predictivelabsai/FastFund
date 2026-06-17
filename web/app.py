@@ -1164,35 +1164,105 @@ def dashboard(sess):
 
 
 # ── Help & technical guide ─────────────────────────────────────────────────────
+# Walk-through sections rendered with the captured screenshots.
+HELP_SECTIONS = [
+    ("ug-01-advisor.png", "The advisor workspace",
+     "Three panes: the client book + navigation on the left, the AI advisor in the "
+     "centre, and the open family's profile + live recommendations on the right. Ask "
+     "in plain English — the advisor routes to specialist agents and answers with "
+     "citations and open-in-panel links."),
+    ("ug-02-clients.png", "Client book",
+     "Every family office in one filterable table — AUM, domicile, stage, family and "
+     "current services. Filter by lifecycle stage; click a name to advise, ‘Open’ for "
+     "the full profile, or ‘+ New family office’ to onboard a lead."),
+    ("ug-03-sfo-detail.png", "Family profile",
+     "AUM, generations, family size and accepted/booked pipeline at a glance, plus the "
+     "asset-allocation donut, current services, jurisdictions, pain points and members."),
+    ("ug-03b-portfolio.png", "Portfolio & transactions",
+     "Mock holdings across asset classes — each with a performance figure — and recent "
+     "cash-flow transactions (capital calls, distributions, buys, fees)."),
+    ("ug-04-pipeline.png", "Pipeline (kanban)",
+     "Every recommendation as a card, grouped by funnel stage. Drag a card between "
+     "columns to advance it; filter by cross-sell/upsell or category."),
+    ("ug-05-calendar.png", "Pipeline calendar",
+     "Scheduled consultations, proposals and follow-ups across the book — urgency-coded "
+     "and exportable to your own calendar with the iCal button."),
+    ("ug-06-coverage.png", "Coverage matrix",
+     "A family × service grid showing held, recommended, or whitespace — spot cross-sell "
+     "opportunities across the whole book at a glance."),
+    ("ug-07-graph.png", "Relationship graph",
+     "Two modes: the cross-sell schema (how services bundle, with weights) and the client "
+     "book (families ↔ services). Click a node to open it."),
+    ("ug-08-dashboard.png", "Analytics dashboard",
+     "Funnel, pipeline value by category, average allocation, service-interest heatmap and "
+     "12-week activity trends — plus headline metrics and acceptance rate."),
+    ("ug-09-documents.png", "Documents & insights",
+     "Upload portfolio summaries, trust deeds and inventories (txt/csv/md/PDF). Attach to a "
+     "family and the AI extracts a profile and refreshes their recommendations."),
+    ("ug-10-onboard.png", "Onboard a new lead",
+     "Capture a prospect through a guided intake; we create the lead and immediately produce "
+     "a tailored service roadmap."),
+    ("ug-11-services.png", "Service catalogue",
+     "The JTC Private Office offerings the advisor cross-sells and upsells — open a service "
+     "for common bundles and which families hold it."),
+]
+
+
+@rt("/user-guide-pdf")
+def user_guide_pdf(sess):
+    if require(sess):
+        return RedirectResponse("/login", status_code=303)
+    return FileResponse("docs/sfohub_user_guide.pdf", media_type="application/pdf",
+                        headers={"Content-Disposition": "inline; filename=sfohub-user-guide.pdf"})
+
+
+@rt("/ug/{name}")
+def ug_asset(sess, name: str):
+    # name has NO extension (e.g. ug-01-advisor) to avoid the static-file shadow.
+    if require(sess):
+        return RedirectResponse("/login", status_code=303)
+    safe = os.path.basename(name) + ".png"
+    path = os.path.join("docs", "screenshots", safe)
+    if not os.path.exists(path):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(path, media_type="image/png")
+
+
 @rt("/help")
 def help_page(sess):
     if (r := require(sess)):
         return r
-    return Page(sess, H1("SFO Hub — Help & guide"),
-        P(A("Technical guide →", href="/technical-guide")),
-        H2("What this is"),
-        P("SFO Hub is an AI relationship-manager simulator for JTC Group's Private "
-          "Office. It engages family-office principals in natural dialogue, analyses "
-          "their profile, and surfaces personalised cross-sell and upsell "
-          "recommendations — a transparent rule engine plus AI scoring."),
-        H2("How to use it"),
-        Ul(Li("Pick a family from the ", B("client book"), " on the left."),
-           Li("Chat with the advisor — ask about their setup, gaps, or what to offer next."),
-           Li("The right panel shows the family's ", B("profile"), " and live ",
-              B("recommendations"), "; open the full ", B("SFO detail"),
-              " page to draft proposals and book consultations."),
-           Li(B("Opportunities"), " lists every recommendation across the book with filters."),
-           Li("The ", B("Pipeline calendar"), " tracks consultations and follow-ups; ",
-              B("Coverage matrix"), " maps held vs. whitespace services; the ",
-              B("Relationship graph"), " visualises the book and the cross-sell graph."),
-           Li("The ", B("Dashboard"), " shows the funnel, pipeline value and interest heatmap.")),
+    sections = []
+    for img, title, desc in HELP_SECTIONS:
+        sections += [
+            Div(H2(title, style="margin-top:0"), P(desc, style="color:var(--muted)"),
+                Img(src=f"/ug/{img[:-4]}", loading="lazy",
+                    style="width:100%;border:1px solid var(--line);border-radius:10px;"
+                          "box-shadow:0 6px 20px rgba(85,0,85,.10);margin-top:8px"),
+                style="margin:22px 0;padding-bottom:18px;border-bottom:1px solid var(--line)")]
+    return Page(sess,
+        Div(H1("SFO Hub — User Guide", style="display:inline-block"),
+            Span(A("📑 Slide deck (PDF)", href="/user-guide-pdf", cls="btn sm"),
+                 " ", A("Technical guide →", href="/technical-guide", cls="btn ghost sm"),
+                 style="float:right;margin-top:8px"), style="overflow:auto"),
+        P("SFO Hub is an AI relationship-manager for JTC Group's Private Office. It "
+          "engages family-office principals in natural dialogue, analyses their profile "
+          "and portfolio, and surfaces personalised, traceable cross-sell and upsell "
+          "recommendations — a transparent rule engine plus AI scoring.", style="font-size:15px"),
+        Div(Div(B("Quick start "), "Open a family from the ", B("Client book"),
+                ", chat with the advisor about their gaps, then work the ", B("Pipeline"),
+                " and ", B("Calendar"), " to convert opportunities.",
+                style="background:#faf2f8;border:1px solid var(--line);border-radius:10px;"
+                      "padding:12px 14px;font-size:14px"), style="margin:10px 0 6px"),
+        *sections,
         H2("How recommendations are made"),
-        P("A deterministic rule catalogue fires on the profile (current services, "
-          "asset mix, pain points, AUM, stage); the cross-sell graph expands the "
-          "candidate set; and an AI layer re-ranks and rewrites each rationale. Every "
-          "recommendation is traceable to the rule or graph edge that produced it."),
-        P(I("Demo note: all family-office data is synthetic. No real client data is used.")),
-        title="Help · SFO Hub", ctx="help")
+        P("A deterministic rule catalogue fires on the profile (services, asset mix, pain "
+          "points, AUM, stage); the cross-sell graph expands the candidate set; and an AI "
+          "layer re-ranks and rewrites each rationale in a relationship-manager voice. "
+          "Every recommendation is traceable to the rule or graph edge that produced it."),
+        P(I("All family-office data is synthetic. No real client data is used."),
+          style="color:var(--muted)"),
+        title="User Guide · SFO Hub", ctx="help")
 
 
 AGENTS_TABLE = [
