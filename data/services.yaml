@@ -1,0 +1,114 @@
+# JTC Private Office service catalogue + cross-sell graph.
+#
+# `services` seed (:Service) nodes; `cross_sells` seed the
+# (:Service)-[:CROSS_SELLS_TO {weight}]->(:Service) graph the engine traverses.
+# Service `key`s are the stable identifiers the rule catalogue (engine/rules.py)
+# refers to — keep them in sync.
+
+services:
+  - key: trusts
+    name: Trust & Fiduciary Services
+    category: structuring
+    tier: core
+    description: Establishment and administration of trusts and foundations across Jersey, Guernsey, and other jurisdictions.
+    url: /service/trusts
+    keywords: [trust, foundation, fiduciary, estate, succession, settlement]
+
+  - key: tax_reporting
+    name: Tax Compliance & Reporting
+    category: compliance
+    tier: core
+    description: Multi-jurisdiction tax compliance, reporting and structuring support for families and their entities.
+    url: /service/tax_reporting
+    keywords: [tax, reporting, compliance, filing, jurisdiction]
+
+  - key: fund_admin
+    name: Fund Administration
+    category: fund
+    tier: core
+    description: Full-scope administration for private equity, venture and direct-investment holding structures.
+    url: /service/fund_admin
+    keywords: [fund, private equity, PE, administration, NAV, investor]
+
+  - key: luxury_assets
+    name: Luxury Asset Administration
+    category: luxury
+    tier: premium
+    description: Ownership structuring, administration and insurance coordination for yachts, aircraft, art and other passion assets.
+    url: /service/luxury_assets
+    keywords: [yacht, aircraft, art, luxury, passion asset, insurance]
+
+  - key: real_estate_admin
+    name: Real Estate Structuring & Admin
+    category: structuring
+    tier: core
+    description: SPV administration and holding structures for cross-border real-estate portfolios.
+    url: /service/real_estate_admin
+    keywords: [real estate, property, SPV, holding, lease]
+
+  - key: edge
+    name: JTC Edge Reporting Platform
+    category: reporting
+    tier: premium
+    description: Consolidated, real-time multi-entity, multi-currency reporting and document portal for the whole family balance sheet.
+    url: /service/edge
+    keywords: [edge, reporting, consolidated, dashboard, portal, technology]
+
+  - key: governance
+    name: Family Governance Framework
+    category: governance
+    tier: premium
+    description: Design and facilitation of family governance — constitutions, councils, decision frameworks and succession planning.
+    url: /service/governance
+    keywords: [governance, succession, family council, constitution, conflict]
+
+  - key: nextgen_education
+    name: Next-Generation Education & Legacy
+    category: governance
+    tier: premium
+    description: Structured next-gen education, legacy planning and Bocconi-style programmes to prepare rising generations.
+    url: /service/nextgen_education
+    keywords: [next-gen, education, legacy, rising generation, learning]
+
+  - key: banking_treasury
+    name: Banking & Treasury Services
+    category: banking
+    tier: core
+    description: Cash management, treasury, FX and banking relationship coordination across family entities.
+    url: /service/banking_treasury
+    keywords: [banking, treasury, cash, liquidity, FX, payments]
+
+  - key: compliance
+    name: Regulatory & Compliance Reporting
+    category: compliance
+    tier: core
+    description: Managed AEOI (FATCA/CRS), economic-substance and beneficial-ownership reporting across jurisdictions.
+    url: /service/compliance
+    keywords: [regulatory, compliance, FATCA, CRS, AEOI, economic substance, beneficial ownership]
+
+  - key: private_office
+    name: JTC Private Office (Dedicated)
+    category: advisory
+    tier: premium
+    description: A dedicated relationship and full service stack for the largest families — one point of contact across everything.
+    url: /service/private_office
+    keywords: [private office, dedicated, relationship manager, concierge, bespoke]
+
+# Cross-sell graph: from -> to (weight 0-1). Higher weight = stronger common bundle.
+cross_sells:
+  - {from: trusts, to: tax_reporting, weight: 0.9}
+  - {from: trusts, to: banking_treasury, weight: 0.7}
+  - {from: trusts, to: governance, weight: 0.6}
+  - {from: fund_admin, to: edge, weight: 0.8}
+  - {from: fund_admin, to: tax_reporting, weight: 0.7}
+  - {from: fund_admin, to: compliance, weight: 0.6}
+  - {from: luxury_assets, to: edge, weight: 0.6}
+  - {from: luxury_assets, to: banking_treasury, weight: 0.5}
+  - {from: real_estate_admin, to: tax_reporting, weight: 0.6}
+  - {from: real_estate_admin, to: banking_treasury, weight: 0.5}
+  - {from: governance, to: nextgen_education, weight: 0.85}
+  - {from: governance, to: private_office, weight: 0.5}
+  - {from: tax_reporting, to: compliance, weight: 0.7}
+  - {from: tax_reporting, to: edge, weight: 0.6}
+  - {from: edge, to: private_office, weight: 0.5}
+  - {from: compliance, to: edge, weight: 0.5}

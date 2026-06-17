@@ -1,0 +1,79 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5021:5021"
+    environment:
+      # Storage backend: 'neo4j' (default) or 'sqlite'.
+      - DATA_STORAGE=${DATA_STORAGE:-neo4j}
+      - DB_URL=sqlite:////app/data/sfohub.db
+      # Neo4j: point at the bundled service below, or at AuraDB in production.
+      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - NEO4J_DATABASE=${NEO4J_DATABASE:-neo4j}
+      - LLM_PROVIDER=${LLM_PROVIDER:-xai}
+      - XAI_API_KEY=${XAI_API_KEY}
+      - XAI_BASE_URL=${XAI_BASE_URL}
+      - GROK_MODEL=${GROK_MODEL}
+      - AZURE_AI_FOUNDRY_ENDPOINT=${AZURE_AI_FOUNDRY_ENDPOINT}
+      - AZURE_AI_FOUNDRY_API_KEY=${AZURE_AI_FOUNDRY_API_KEY}
+      - FOUNDRY_MODEL=${FOUNDRY_MODEL}
+      - APP_SECRET=${APP_SECRET}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - SFOHUB_PUBLIC=${SFOHUB_PUBLIC:-0}
+      - PORT=5021
+    volumes:
+      - sfohub-data:/app/data
+    labels:
+      - coolify.managed=true
+      - coolify.port=5021
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5021/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot / scheduled demo-data seeder. Shares the data volume.
+  #   docker compose run --rm seed --count 80
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    environment:
+      - DATA_STORAGE=${DATA_STORAGE:-neo4j}
+      - DB_URL=sqlite:////app/data/sfohub.db
+      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - NEO4J_DATABASE=${NEO4J_DATABASE:-neo4j}
+    volumes:
+      - sfohub-data:/app/data
+    entrypoint: ["python", "-m", "data.synth"]
+    command: ["--count", "80"]
+
+  # Self-hosted Neo4j for environments not using AuraDB. Opt-in:
+  #   docker compose --profile neo4j up -d
+  # In production prefer AuraDB: NEO4J_URI=neo4j+s://<id>.databases.neo4j.io
+  neo4j:
+    image: neo4j:5.26-community
+    profiles: ["neo4j"]
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
+      - NEO4J_server_memory_heap_max__size=1G
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+    restart: unless-stopped
+
+volumes:
+  sfohub-data:
+  neo4j-data:
