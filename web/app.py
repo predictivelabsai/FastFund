@@ -705,8 +705,14 @@ var net=new vis.Network(document.getElementById('net'),
   {nodes:new vis.DataSet(d.nodes),edges:new vis.DataSet(d.edges)},
   {groups:groups,nodes:{font:{size:13,color:'#48484f'},scaling:{min:8,max:46}},
    edges:{arrows:{to:{scaleFactor:0.4}},font:{size:9,color:'#9a93a6'},smooth:{type:'dynamic'}},
-   physics:{stabilization:{iterations:160},barnesHut:{springLength:140,avoidOverlap:0.2}},
+   // Super-slow, calm physics: heavy damping + a low velocity cap + a small
+   // timestep so nodes drift gently instead of wobbling fast.
+   physics:{stabilization:{iterations:200},maxVelocity:2.2,minVelocity:0.05,
+     timestep:0.18,adaptiveTimestep:false,
+     barnesHut:{springLength:150,avoidOverlap:0.2,damping:0.92,gravitationalConstant:-2200}},
    interaction:{hover:true}});
+// Once the layout settles, freeze it so it stays perfectly still until dragged.
+net.once('stabilizationIterationsDone',()=>net.setOptions({physics:{enabled:false}}));
 net.on('click',p=>{if(!p.nodes.length)return;var n=net.body.data.nodes.get(p.nodes[0]);
   if(n.sfoid)location='/sfo/'+n.sfoid; else if(n.serviceid)location='/service/'+n.serviceid;});
 """)
