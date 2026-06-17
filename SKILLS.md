@@ -426,7 +426,7 @@ B=https://taxhub.predictivelabs.ai; J=/tmp/c.txt; rm -f $J
 curl -sS $B/health                                   # {"status":"ok"}
 curl -so/dev/null -w "%{http_code}\n" $B/             # 303 -> /login (auth gate)
 curl -sS -c$J -b$J -o/dev/null -w "%{http_code}\n" \
-  --data-urlencode email=admin@jtgroup.com --data-urlencode 'password=Funds2$2' $B/login   # 303 -> /
+  --data-urlencode email=admin@jtcgroup.com --data-urlencode 'password=Funds2$2' $B/login   # 303 -> /
 curl -sS -c$J -b$J $B/ | grep -o Jersey               # dashboard reads AuraDB
 curl -sS -c$J -b$J --data-urlencode "q=economic substance Jersey?" $B/ask | grep -o Answer  # graph-RAG + Grok
 ```

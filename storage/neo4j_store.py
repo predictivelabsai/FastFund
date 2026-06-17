@@ -103,7 +103,7 @@ class Neo4jStore(Storage):
     def _seed_admin(self) -> None:
         import bcrypt
 
-        email = os.environ.get("ADMIN_EMAIL", "admin@jtgroup.com")
+        email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
         pw = os.environ.get("ADMIN_PASSWORD", "Funds2$2")
         with self._session() as s:
             exists = s.run("MATCH (u:User {email:$e}) RETURN u LIMIT 1", e=email).single()

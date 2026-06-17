@@ -226,7 +226,7 @@ class SqliteStore(Storage):
     def _seed_admin(self) -> None:
         import bcrypt
 
-        email = os.environ.get("ADMIN_EMAIL", "admin@jtgroup.com")
+        email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
         pw = os.environ.get("ADMIN_PASSWORD", "Funds2$2")
         with self.conn() as c:
             exists = c.execute(

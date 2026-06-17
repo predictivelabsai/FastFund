@@ -125,7 +125,7 @@ def test_storage_contract(store):
     store.finish_run(run_id, checked=1, new=1, changed=0, errors=0)
 
     # Admin user seeded by init_db
-    admin = store.get_user_by_email("admin@jtgroup.com")
+    admin = store.get_user_by_email("admin@jtcgroup.com")
     assert admin and admin["password_hash"]
 
     # Full-text / graph-RAG retrieval finds our distinctive token

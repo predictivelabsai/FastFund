@@ -117,7 +117,7 @@ XAI_API_KEY=...           # xAI Grok (OpenAI-compatible); optional, AI degrades 
 XAI_BASE_URL=https://api.x.ai/v1
 GROK_MODEL=grok-4-1-fast-reasoning
 LLM_PROVIDER=xai
-ADMIN_EMAIL=admin@jtgroup.com
+ADMIN_EMAIL=admin@jtcgroup.com
 ADMIN_PASSWORD=...
 ```
 
