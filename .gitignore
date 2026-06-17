@@ -225,3 +225,6 @@ __marimo__/
 
 # Uploaded documents (local doc store)
 data/uploads/
+
+# Deployment credentials (never commit)
+.secrets/

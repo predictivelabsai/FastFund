@@ -238,6 +238,36 @@ def seed_conversations(sfo_ids: list[int], rng: random.Random) -> int:
     return n
 
 
+def run_seed(count: int = 100, seed: int = 42) -> dict:
+    """Programmatic full seed (services + SFOs + members + funnel + actions +
+    documents + conversations). Used by the CLI and by the app's auto-seed."""
+    from faker import Faker
+    store.init_db()
+    rng = random.Random(seed)
+    fake = Faker()
+    Faker.seed(seed)
+    seed_services()
+    ids = seed_sfos(count, rng)
+    seed_members(ids, rng, fake)
+    seed_funnel(ids, rng)
+    seed_actions(ids, rng)
+    seed_documents(ids, rng)
+    seed_conversations(ids, rng)
+    return store.stats()
+
+
+def autoseed_if_empty(count: int = 100, seed: int = 42) -> bool:
+    """Seed only when the store has no SFOs yet — safe to call on every boot.
+    Returns True if it seeded. Gated by the caller (e.g. SFOHUB_AUTOSEED=1)."""
+    try:
+        if store.count_sfos() > 0:
+            return False
+        run_seed(count, seed)
+        return True
+    except Exception:  # noqa: BLE001 — never let seeding crash app startup
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser(description="Seed SFO Hub demo data")
     ap.add_argument("--count", type=int, default=100, help="number of synthetic SFOs")

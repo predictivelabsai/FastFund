@@ -24,6 +24,11 @@ from engine import crosssell
 from web import monitor, coverage as cov, graphdata
 
 store.init_db()
+# Auto-seed a fresh deployment so the demo always has data, even on an ephemeral
+# volume (gated by env so local dev doesn't seed unexpectedly).
+if os.environ.get("SFOHUB_AUTOSEED", "0") == "1":
+    from data import synth
+    synth.autoseed_if_empty(int(os.environ.get("SFOHUB_SEED_COUNT", "100")))
 LOGIN_REQUIRED = os.environ.get("SFOHUB_PUBLIC", "0") != "1"
 
 CATEGORY_LABELS = {
