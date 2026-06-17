@@ -62,7 +62,7 @@ SHORTCUTS = [
 NAV = [
     ("/", "🏠 Advisor", "home"),
     ("/dashboard", "📊 Dashboard", "dashboard"),
-    ("/opportunities", "🎯 Opportunities", "opportunities"),
+    ("/opportunities", "🎯 Pipeline", "opportunities"),
     ("/calendar", "🗓 Pipeline calendar", "calendar"),
     ("/coverage", "🧮 Coverage matrix", "coverage"),
     ("/graph", "🕸 Relationship graph", "graph"),
@@ -156,6 +156,21 @@ th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
 .filters select,.filters input{padding:7px;border:1px solid var(--line);border-radius:7px;font:inherit}
 .urg{display:inline-block;border-radius:20px;padding:1px 9px;font-size:10.5px;font-weight:600;color:#fff}
+/* Kanban pipeline */
+.kanban{display:flex;gap:12px;overflow-x:auto;padding:8px 0 16px;align-items:flex-start}
+.kcol{min-width:240px;max-width:300px;flex:1 0 240px;background:#fbfcfd;border:1px solid var(--line);
+border-radius:10px;display:flex;flex-direction:column;max-height:calc(100vh - 190px)}
+.kcol.drop{border-color:var(--accent);background:#faf2f8}
+.kcol-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;
+border-bottom:3px solid var(--line);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.kcol-count{color:var(--muted);font-weight:600;font-size:11px}
+.kcol-body{padding:8px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;flex:1;min-height:40px}
+.kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:12.5px;cursor:grab}
+.kcard:hover{border-color:var(--accent)}.kcard.dragging{opacity:.4}
+.kcard .kc-svc{font-weight:600;color:var(--navy)}.kcard .kc-sfo{font-size:11.5px}
+.kcard .kc-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:6px}
+.kcard .kc-val{color:var(--green);font-weight:600;font-size:11.5px}
+.kcol-more{font-size:11px;color:var(--muted);text-align:center;padding:4px}
 #net{height:calc(100vh - 56px);background:#fbfcfd}
 .feed-item{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:9px;font-size:13px}
 .proposal{background:#faf7fb;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:13px;white-space:pre-wrap;margin-top:6px}
@@ -620,44 +635,92 @@ def action_done(sess, action_id: int):
     return Tr(Td("✓ done", colspan="5", style="color:var(--green)"))
 
 
-# ── Opportunities (funnel) ─────────────────────────────────────────────────────
+# ── Pipeline (kanban) ──────────────────────────────────────────────────────────
+_KANBAN_CAP = 80  # cards rendered per column
+
+
+def _kcard(r):
+    return Div(
+        Div(r["service_name"], cls="kc-svc"),
+        Div(A(r["sfo_name"], href=f"/sfo/{r['sfo_id']}", draggable="false"), cls="kc-sfo"),
+        Div(kind_badge(r["kind"]),
+            Span(f"{r['score']:.0%} · ", Span(money(r["est_value_usd"]), cls="kc-val")),
+            cls="kc-meta"),
+        cls="kcard", draggable="true",
+        **{"data-recid": str(r["id"]), "data-status": r["status"]})
+
+
+KANBAN_JS = Script("""
+let dragId=null;
+function kbInit(){
+  document.querySelectorAll('.kcard').forEach(c=>{
+    c.addEventListener('dragstart',e=>{dragId=c.dataset.recid;c.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
+    c.addEventListener('dragend',()=>c.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.kcol').forEach(col=>{
+    col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('drop');});
+    col.addEventListener('dragleave',()=>col.classList.remove('drop'));
+    col.addEventListener('drop',async e=>{
+      e.preventDefault();col.classList.remove('drop');
+      const card=document.querySelector('.kcard[data-recid="'+dragId+'"]');
+      const status=col.dataset.status;
+      if(card && card.dataset.status!==status){
+        col.querySelector('.kcol-body').appendChild(card);
+        card.dataset.status=status;
+        kbCounts();
+        try{await fetch('/rec/'+dragId+'/status?status='+status,{method:'POST'});}catch(e){}
+      }
+    });
+  });
+}
+function kbCounts(){document.querySelectorAll('.kcol').forEach(c=>{
+  const n=c.querySelectorAll('.kcard').length; const el=c.querySelector('.kcol-count'); if(el)el.textContent=n;});}
+document.addEventListener('DOMContentLoaded',kbInit);
+""")
+
+
 @rt("/opportunities")
-def opportunities(sess, kind: str = "", status: str = "", category: str = "", minfit: int = 0):
+def opportunities(sess, kind: str = "", category: str = ""):
     if (r := require(sess)):
         return r
     recs = store.list_recommendations(limit=10000)
     if kind:
         recs = [r for r in recs if r["kind"] == kind]
-    if status:
-        recs = [r for r in recs if r["status"] == status]
     if category:
         recs = [r for r in recs if r.get("service_category") == category]
-    if minfit:
-        recs = [r for r in recs if (r["score"] or 0) * 100 >= minfit]
     total_val = sum(r["est_value_usd"] for r in recs)
-    sel = lambda cur, val: {"selected": "selected"} if cur == val else {}  # noqa: E731
-    rows = [Tr(Td(A(r["sfo_name"], href=f"/sfo/{r['sfo_id']}")),
-               Td(A(r["service_name"], href=f"/service/{r['service_id']}")),
-               Td(kind_badge(r["kind"])), Td(f"{r['score']:.0%}"),
-               Td(money(r["est_value_usd"])), Td(status_badge(r["status"])),
-               Td(r.get("source", "")))
-            for r in recs[:400]]
+    by_status = {s: [r for r in recs if r["status"] == s] for s in STATUS_ORDER}
+
+    cols = []
+    for s in STATUS_ORDER:
+        items = by_status[s]
+        body = [_kcard(r) for r in items[:_KANBAN_CAP]]
+        if len(items) > _KANBAN_CAP:
+            body.append(Div(f"+ {len(items) - _KANBAN_CAP} more", cls="kcol-more"))
+        cols.append(Div(
+            Div(Span(s.title()), Span(str(len(items)), cls="kcol-count"),
+                cls="kcol-head", style=f"border-bottom-color:{STATUS_COLOR.get(s)}"),
+            Div(*body, cls="kcol-body"),
+            cls="kcol", **{"data-status": s}))
+
+    chip = lambda lbl, q, on: A(lbl, href=q, cls="urg",  # noqa: E731
+                                style=f"background:{'#6b1766' if on else '#9a93a6'};margin-right:6px")
+    filters = Div(
+        chip("All", "/opportunities", not kind),
+        chip("Cross-sell", "/opportunities?kind=cross_sell", kind == "cross_sell"),
+        chip("Upsell", "/opportunities?kind=upsell", kind == "upsell"),
+        Span(" · ", style="color:var(--muted)"),
+        *[chip(v, f"/opportunities?category={k}", category == k) for k, v in CATEGORY_LABELS.items()],
+        style="margin:10px 0;display:flex;flex-wrap:wrap;align-items:center")
+
     return Page(sess,
-        H1("Opportunities"),
-        P(f"{len(recs)} recommendations · {money(total_val)} total estimated annual value",
-          style="color:var(--muted)"),
-        Form(
-            Select(Option("All kinds", value=""), Option("Cross-sell", value="cross_sell", **sel(kind, "cross_sell")),
-                   Option("Upsell", value="upsell", **sel(kind, "upsell")), name="kind"),
-            Select(Option("All statuses", value=""),
-                   *[Option(s.title(), value=s, **sel(status, s)) for s in STATUS_ORDER], name="status"),
-            Select(Option("All categories", value=""),
-                   *[Option(v, value=k, **sel(category, k)) for k, v in CATEGORY_LABELS.items()], name="category"),
-            Input(name="minfit", type="number", placeholder="Min fit %", value=minfit or "", style="width:110px"),
-            Button("Filter", cls="btn sm"), cls="filters", method="get", action="/opportunities"),
-        Table(Tr(Th("Family"), Th("Service"), Th("Kind"), Th("Fit"), Th("Est. value"),
-                 Th("Status"), Th("Source")), *rows),
-        title="Opportunities · SFO Hub", ctx="opportunities")
+        H1("Pipeline"),
+        P(f"{len(recs)} recommendations · {money(total_val)} total estimated annual value · "
+          "drag a card between stages to advance it", style="color:var(--muted)"),
+        filters,
+        Div(*cols, cls="kanban"),
+        KANBAN_JS,
+        title="Pipeline · SFO Hub", ctx="opportunities")
 
 
 # ── Pipeline calendar ──────────────────────────────────────────────────────────
