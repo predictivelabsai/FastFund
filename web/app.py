@@ -62,6 +62,7 @@ SHORTCUTS = [
 NAV = [
     ("/", "🏠 Advisor", "home"),
     ("/dashboard", "📊 Dashboard", "dashboard"),
+    ("/clients", "👪 Client book", "clients"),
     ("/opportunities", "🎯 Pipeline", "opportunities"),
     ("/calendar", "🗓 Pipeline calendar", "calendar"),
     ("/coverage", "🧮 Coverage matrix", "coverage"),
@@ -290,15 +291,6 @@ def logout(sess):
 
 # ── Shared chrome ──────────────────────────────────────────────────────────────
 def left_pane(sess, active_id=None, ctx="home"):
-    sfos = store.list_sfos(limit=80)
-    items = []
-    for s in sfos[:60]:
-        cls = "client active" if s["id"] == active_id else "client"
-        href = f"/?sfo={s['id']}" if ctx == "home" else f"/sfo/{s['id']}"
-        items.append(A(Div(s["name"]),
-                       Div(money(s.get("aum_usd")), f" · {s.get('domicile','')} ",
-                           stage_badge(s.get("stage", "lead")), cls="meta"),
-                       cls=cls, href=href))
     return Div(
         Div("SFO ", Span("Hub"), cls="brand"),
         A("+ New conversation", href="/", cls="newchat"),
@@ -307,7 +299,6 @@ def left_pane(sess, active_id=None, ctx="home"):
               for href, lbl, key in NAV],
             A("↪ Sign out", href="/logout", cls="navlink"),
             cls="section"),
-        Div(Div(f"Client book · {len(sfos)}", cls="lbl"), *items, cls="section"),
         cls="pane left")
 
 
@@ -633,6 +624,38 @@ def action_done(sess, action_id: int):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     store.set_next_action_status(action_id, "done")
     return Tr(Td("✓ done", colspan="5", style="color:var(--green)"))
+
+
+# ── Client book ────────────────────────────────────────────────────────────────
+@rt("/clients")
+def clients(sess, stage: str = ""):
+    if (r := require(sess)):
+        return r
+    sfos = store.list_sfos(limit=500)
+    if stage:
+        sfos = [s for s in sfos if s.get("stage") == stage]
+    chip = lambda lbl, q, on: A(lbl, href=q, cls="urg",  # noqa: E731
+                                style=f"background:{'#6b1766' if on else '#9a93a6'};margin-right:6px")
+    filters = Div(chip("All", "/clients", not stage),
+                  *[chip(s.title(), f"/clients?stage={s}", stage == s)
+                    for s in ("lead", "onboarding", "client")],
+                  style="margin:10px 0")
+    rows = [Tr(Td(A(B(s["name"]), href=f"/?sfo={s['id']}")),
+               Td(money(s.get("aum_usd"))), Td(s.get("domicile", "—")),
+               Td(stage_badge(s.get("stage", "lead"))),
+               Td(f"{s.get('generations','—')}g · {s.get('family_size','—')} members",
+                  style="color:var(--muted)"),
+               Td(", ".join((s.get("current_services") or [])[:4]) or "—",
+                  style="color:var(--muted)"),
+               Td(A("Open ↗", href=f"/sfo/{s['id']}")))
+            for s in sfos]
+    return Page(sess, H1("Client book"),
+        P(f"{len(sfos)} family offices · click a name to advise, or Open for the full profile",
+          style="color:var(--muted)"),
+        filters,
+        Table(Tr(Th("Family office"), Th("AUM"), Th("Domicile"), Th("Stage"),
+                 Th("Family"), Th("Current services"), Th("")), *rows),
+        title="Client book · SFO Hub", ctx="clients")
 
 
 # ── Pipeline (kanban) ──────────────────────────────────────────────────────────
