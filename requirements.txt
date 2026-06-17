@@ -1,0 +1,22 @@
+python-fasthtml==0.14.2
+sqlalchemy==2.0.50
+psycopg2-binary==2.9.12
+# Graph backend (DATA_STORAGE=neo4j). 4.4.x driver speaks Bolt to a local
+# Neo4j 4.x and to AuraDB 5.x — no code change when moving to Aura.
+neo4j==4.4.12
+python-dotenv==1.2.2
+uvicorn==0.49.0
+python-multipart==0.0.32
+# AI orchestration (OpenAI-compatible: xAI Grok in dev, Azure AI Foundry in prod)
+langchain-core==1.4.1
+langchain-openai==1.2.2
+langgraph==1.2.4
+httpx==0.28.1
+pydantic-settings==2.14.1
+pyyaml==6.0.3
+bcrypt==4.3.0
+# Synthetic demo data
+faker==30.8.2
+# Testing
+pytest==8.4.1
+pytest-asyncio==1.0.0

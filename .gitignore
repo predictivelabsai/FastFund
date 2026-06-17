@@ -1,3 +1,9 @@
+# SFO Hub local artifacts
+*.db
+*.db-journal
+sfohub-*.png
+.playwright-mcp/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
