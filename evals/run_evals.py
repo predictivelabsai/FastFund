@@ -47,13 +47,29 @@ load_dotenv(ROOT / ".env")
 THRESHOLD = 0.5
 
 
-# ── Agent under test ────────────────────────────────────────────────────────────
+# ── Agents under test ───────────────────────────────────────────────────────────
 def run_text_to_sql(question: str) -> str:
+    """The text-to-SQL engine in isolation."""
     from rag.text2sql import ask_data
     try:
         return ask_data(question)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
+
+
+def run_assistant(question: str) -> str:
+    """The ACTUAL AI assistant — the LangGraph orchestrator with all tools. Tests
+    the real product path (routing → data_agent → text-to-SQL → synthesis)."""
+    from agents import orchestrator
+    from agents.context import set_active_sfo
+    set_active_sfo(None)  # book-wide questions, no single SFO in context
+    try:
+        return orchestrator.answer(question).get("answer", "")
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR: {e}"
+
+
+AGENT_RUNNERS = {"sql": run_text_to_sql, "assistant": run_assistant}
 
 
 # ── GrokJudge — deepeval LLM wrapper for xAI Grok ───────────────────────────────
@@ -144,10 +160,13 @@ def load_ground_truth(path, category=None, limit=None):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--agent", choices=["assistant", "sql"], default="assistant",
+                    help="'assistant' = full orchestrator (default); 'sql' = text-to-SQL engine only")
     ap.add_argument("--category", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    runner = AGENT_RUNNERS[args.agent]
 
     rows = load_ground_truth(EVALS_DIR / "ground_truth.csv",
                              args.category or None, args.limit or None)
@@ -157,29 +176,31 @@ def main():
             print(f"  [{r['category']}] {r['question']}  →  {r['expected_answer']}")
         return
 
+    print(f"Agent under test: {args.agent}")
     metric = build_metric(build_judge())
     results, passed = [], 0
     for i, row in enumerate(rows, 1):
         q, expected, cat = row["question"], row["expected_answer"], row["category"]
-        ai = run_text_to_sql(q)
+        ai = runner(q)
         result, score, reason = judge_verdict(metric, q, expected, ai)
         passed += result == "PASS"
         print(f"[{i}/{len(rows)}] {result} ({score}) — {q}")
         if result != "PASS":
-            print(f"      expected: {expected}\n      got:      {ai}")
-        results.append({"question": q, "category": cat, "expected_answer": expected,
-                        "ai_answer": ai, "result": result, "score": score, "reason": reason})
+            print(f"      expected: {expected}\n      got:      {ai[:300]}")
+        results.append({"question": q, "category": cat, "agent": args.agent,
+                        "expected_answer": expected, "ai_answer": ai,
+                        "result": result, "score": score, "reason": reason})
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = EVALS_DIR / f"eval-results-{ts}.csv"
+    out = EVALS_DIR / f"eval-results-{args.agent}-{ts}.csv"
     with out.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["question", "category", "expected_answer",
+        w = csv.DictWriter(f, fieldnames=["question", "category", "agent", "expected_answer",
                                           "ai_answer", "result", "score", "reason"])
         w.writeheader()
         w.writerows(results)
 
     rate = passed / len(results) * 100 if results else 0
-    print(f"\n{'='*60}\nPASS {passed}/{len(results)} ({rate:.0f}%)  ·  results → {out.name}")
+    print(f"\n{'='*60}\nAgent {args.agent}: PASS {passed}/{len(results)} ({rate:.0f}%)  ·  → {out.name}")
 
 
 if __name__ == "__main__":

@@ -54,13 +54,20 @@ def get_llm():
 
 
 def complete(system: str, user: str, temperature: float = 0.2) -> str:
-    """One-shot completion. Returns '' if AI is unavailable or errors."""
+    """One-shot completion. Returns '' if AI is unavailable or errors.
+
+    Tagged ``nested_llm`` so that when this is called from inside an agent tool
+    (recommend re-rank, proposal drafting, text-to-SQL) its tokens can be filtered
+    out of the orchestrator's streamed chat output — otherwise the tool's internal
+    LLM output leaks into the user-visible stream.
+    """
     if not ai_available():
         return ""
     try:
         from langchain_core.messages import SystemMessage, HumanMessage
         resp = get_llm().invoke([SystemMessage(content=system),
-                                 HumanMessage(content=user)])
+                                 HumanMessage(content=user)],
+                                config={"tags": ["nested_llm"]})
         return getattr(resp, "content", "") or ""
     except Exception as e:  # noqa: BLE001
         return f"[AI unavailable: {e}]"

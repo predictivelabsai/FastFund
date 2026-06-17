@@ -82,6 +82,11 @@ async def astream(question: str, history: list | None = None):
         async for ev in get_agent().astream_events({"messages": msgs}, version="v2"):
             kind = ev["event"]
             if kind == "on_chat_model_stream":
+                # Skip tokens from tool-internal LLM calls (recommend re-rank,
+                # proposal drafting, text-to-SQL) — they are tagged 'nested_llm'
+                # and must not leak into the user-visible chat stream.
+                if "nested_llm" in (ev.get("tags") or []):
+                    continue
                 chunk = ev["data"].get("chunk")
                 text = getattr(chunk, "content", "") if chunk else ""
                 if text:
