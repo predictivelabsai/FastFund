@@ -172,6 +172,11 @@ iframe.pdf{width:100%;height:100%;border:none}
 .btn{display:inline-block;background:var(--navy);color:#fff;padding:9px 16px;border-radius:7px;font-size:14px}
 .form{background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px;max-width:380px;margin:60px auto}
 .form input{width:100%;padding:10px;border:1px solid var(--line);border-radius:7px;margin:6px 0 14px}
+.pwwrap{position:relative}
+.pwwrap input{padding-right:42px}
+.pweye{position:absolute;right:6px;top:13px;background:none;border:none;cursor:pointer;
+  font-size:17px;line-height:1;padding:4px;color:var(--muted)}
+.pweye:hover{color:var(--navy)}
 .wrap{max-width:1000px;margin:0 auto;padding:24px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line);font-size:13.5px}
@@ -233,8 +238,18 @@ def login_form(sess, error: str = ""):
         H2("TaxHub Demo"), P("Sign in", style="color:#6b7686"),
         (P(error, style="color:#c0392b") if error else ""),
         Input(name="email", placeholder="Email", type="email"),
-        Input(name="password", placeholder="Password", type="password"),
+        Div(
+            Input(name="password", placeholder="Password", type="password", id="pw"),
+            Button("👁", type="button", cls="pweye", id="pweye",
+                   onclick="togglePw(this)", aria_label="Show password",
+                   aria_pressed="false"),
+            cls="pwwrap"),
         Button("Sign in", cls="btn", style="width:100%"),
+        Script("function togglePw(b){var i=document.getElementById('pw');"
+               "var s=i.type==='password';i.type=s?'text':'password';"
+               "b.textContent=s?'🙈':'👁';"
+               "b.setAttribute('aria-label',s?'Hide password':'Show password');"
+               "b.setAttribute('aria-pressed',s?'true':'false');i.focus();}"),
         method="post", action="/login", cls="form")
 
 
