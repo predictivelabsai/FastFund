@@ -177,6 +177,12 @@ class Storage(abc.ABC):
     def get_user_by_email(self, email: str) -> dict | None:
         """Return ``{id, password_hash}`` for a user, or None."""
 
+    @abc.abstractmethod
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        """Return ``{id, email}`` for the user with ``email``, creating a
+        password-less account (role ``user``) on first sign-in. Used by the
+        Google OAuth flow, where there is no local password."""
+
     # ── Graph-RAG retrieval ────────────────────────────────────────────────
 
     @abc.abstractmethod

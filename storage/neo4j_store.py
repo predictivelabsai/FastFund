@@ -119,6 +119,7 @@ class Neo4jStore(Storage):
             "role:$r, created_at:$now})",
             uid=uid, e=email, p=pw_hash, n=name, r=role, now=utcnow(),
         )
+        return uid
 
     # ── Jurisdictions / documents (write) ──────────────────────────────────
 
@@ -438,6 +439,16 @@ class Neo4jStore(Storage):
                 e=email.strip().lower(),
             ).single()
             return dict(rec) if rec else None
+
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        email = email.strip().lower()
+        with self._session() as s:
+            rec = s.run("MATCH (u:User {email:$e}) RETURN u.uid AS id", e=email).single()
+            if rec:
+                return {"id": rec["id"], "email": email}
+            uid = s.write_transaction(
+                self._create_user, email, None, name or email.split("@")[0], "user")
+            return {"id": uid, "email": email}
 
     # ── Graph-RAG retrieval (Lucene full-text over current versions) ────────
 

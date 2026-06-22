@@ -25,6 +25,8 @@ PyPDF2==3.0.1
 exa-py==2.13.0
 bcrypt==4.3.0
 requests==2.32.3
+# Google OAuth (OIDC) sign-in — see web/app.py
+Authlib==1.6.5
 # Mobile API (optional — monolith works without these)
 fastapi==0.136.3
 email-validator==2.2.0

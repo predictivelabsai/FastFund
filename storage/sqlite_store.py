@@ -540,6 +540,24 @@ class SqliteStore(Storage):
             ).mappings().fetchone()
             return dict(row) if row else None
 
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        email = email.strip().lower()
+        with self.conn() as c:
+            row = c.execute(
+                text("SELECT id FROM users WHERE email=:e"), {"e": email}
+            ).mappings().fetchone()
+            if row:
+                return {"id": row["id"], "email": email}
+            c.execute(
+                text("INSERT INTO users (email, password_hash, name, role) "
+                     "VALUES (:e, NULL, :n, 'user')"),
+                {"e": email, "n": name or email.split("@")[0]},
+            )
+            row = c.execute(
+                text("SELECT id FROM users WHERE email=:e"), {"e": email}
+            ).mappings().fetchone()
+            return {"id": row["id"], "email": email}
+
     # ── Graph-RAG retrieval (full-text over current versions) ───────────────
 
     def search_versions(self, query: str, limit: int = 8) -> list[dict]:
