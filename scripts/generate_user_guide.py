@@ -95,6 +95,20 @@ SLIDES = [
         "Each result shows the filing type (downloadable PDF vs online portal), "
         "who files, the deadline and the frequency.",
         "Open any form straight from the answer."]),
+    ("aeoi", "AEOI readiness · FATCA / CRS", "ug-15-aeoi.png", [
+        "Every entity is classified under CRS (Financial Institution vs Active / "
+        "Passive NFE) and FATCA (FFI / NFFE + GIIN) — derived from its own profile.",
+        "Validated for the documentation a return needs: a valid W-8 / self-"
+        "certification, a treaty TIN, a GIIN, and identified controlling persons.",
+        "A filing-ready / needs-review / not-ready verdict per entity, with the "
+        "exact blocking issue and how to fix it — CRS 3.0 checks built in."]),
+    ("w8", "Agent auto-fills a W-8BEN-E", "ug-16-w8.png", [
+        "Ask the assistant to prepare a W-8BEN-E for an entity; the form opens on "
+        "the right and fills in live from everything TaxHub already knows.",
+        "Each field is validated as it lands — here the missing GIIN for a "
+        "Reporting Model 1 FFI is flagged in red and the form is marked Not ready.",
+        "Edit any field, re-validate, then sign off — the human-in-the-loop "
+        "guardrail. A conceptual demo of agent-assisted form completion."]),
     ("how", "How it works", None, [
         "A live-scraped corpus of tax law across 26 jurisdictions, stored as a "
         "graph (documents → versions → changes → citations) in Neo4j.",
