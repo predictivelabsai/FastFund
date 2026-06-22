@@ -18,6 +18,8 @@ from starlette.responses import StreamingResponse
 
 import taxstore as store
 from web import monitor
+from web import aeoi
+from web import w8form
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -198,6 +200,25 @@ display:flex;align-items:center;justify-content:space-between}
 .cop .composer button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:600;cursor:pointer}
 .cop .scard{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12px;cursor:pointer;margin:3px 0}
 .cop .scard:hover{border-color:var(--accent);color:var(--navy)}
+/* W-8BEN-E facsimile (right-pane form editor) */
+.w8form{padding:6px 4px;font-size:12.5px}
+.w8title{border-bottom:2px solid var(--navy);padding-bottom:6px;margin-bottom:8px}
+.w8status{background:#faf7fc;border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-bottom:10px}
+.w8sec{display:flex;align-items:baseline;gap:8px;margin:12px 0 4px;border-bottom:1px solid var(--line);padding-bottom:3px}
+.w8part{font-weight:700;color:var(--navy);font-size:11px}
+.w8head{font-size:12px;color:var(--text)}
+.w8field{margin:7px 0}
+.w8frow{display:flex;align-items:center;gap:6px}
+.w8ln{color:var(--muted);font-size:10px;min-width:42px}
+.w8lbl{flex:1;font-size:11.5px;color:var(--text)}
+.w8badge{font-weight:700;font-size:13px}
+.w8inp{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;font-size:12px;margin-top:2px;background:#fff;transition:background .2s,border-color .2s}
+.w8inp:focus{outline:none;border-color:var(--accent)}
+.w8filling{background:#fff7e6;border-color:var(--amber)}
+.w8filled{background:#eaf5ee;border-color:var(--green)}
+.w8hint{font-size:10.5px;margin-top:2px;min-height:12px}
+.w8actions{margin:14px 0 4px}
+.w8stamp{display:none;margin-top:10px;background:#eaf5ee;color:#1c7c44;border:1px solid #b7e0c4;border-radius:8px;padding:8px 10px;font-weight:600}
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
@@ -227,6 +248,58 @@ app, rt = fast_app(hdrs=(MARKED,), secret_key=os.environ.get("APP_SECRET", "taxh
                    pico=False)
 
 
+# ── Google OAuth (optional — enabled when client id + secret are set) ─────────
+# Mirrors the sister LiquidRound app: OIDC via Authlib, /auth/google →
+# Google consent → /auth/callback. The OAuth client lives in the "finespresso"
+# GCP project. If GOOGLE_ALLOWED_DOMAINS is set (comma-separated, e.g.
+# "jtcgroup.com"), only those email domains may sign in — existing accounts
+# (e.g. the seeded admin) are always allowed. Unset ⇒ any Google account.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in os.environ.get("GOOGLE_ALLOWED_DOMAINS", "").split(",") if d.strip()
+]
+OAUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+_oauth = None
+if OAUTH_ENABLED:
+    from authlib.integrations.starlette_client import OAuth as _AuthlibOAuth
+    _oauth = _AuthlibOAuth()
+    _oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+_GOOGLE_SVG = ('<svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:-4px;'
+               'margin-right:9px"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844'
+               'c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 '
+               '2.684-6.615z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908'
+               '-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 '
+               '8.997 0 009 18z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593'
+               '.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9s.38 1.572.957 3.042l3.007-2.332z" '
+               'fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 '
+               '11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" '
+               'fill="#EA4335"/></svg>')
+
+
+def _google_button():
+    """'Continue with Google' button + an 'or' divider, for the login form."""
+    return Div(
+        Div(
+            Span(style="flex:1;height:1px;background:var(--line)"),
+            Span("or", style="color:#9aa3ab;font-size:12px;padding:0 10px"),
+            Span(style="flex:1;height:1px;background:var(--line)"),
+            style="display:flex;align-items:center;margin:18px 0 14px"),
+        A(NotStr(_GOOGLE_SVG), "Continue with Google", href="/auth/google",
+          style="display:flex;align-items:center;justify-content:center;width:100%;"
+                "padding:10px;border:1px solid var(--line);border-radius:7px;"
+                "color:var(--text);font-size:14px;font-weight:600;text-decoration:none;"
+                "background:#fff"))
+
+
 @rt("/health")
 def health():
     return JSONResponse({"status": "ok"})
@@ -250,6 +323,7 @@ def login_form(sess, error: str = ""):
                "b.textContent=s?'🙈':'👁';"
                "b.setAttribute('aria-label',s?'Hide password':'Show password');"
                "b.setAttribute('aria-pressed',s?'true':'false');i.focus();}"),
+        (_google_button() if OAUTH_ENABLED else ""),
         method="post", action="/login", cls="form")
 
 
@@ -269,6 +343,41 @@ def login_submit(sess, email: str = "", password: str = ""):
 def logout(sess):
     sess.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# ── Google OAuth: redirect to Google, then handle the callback ────────────────
+if OAUTH_ENABLED:
+    def _redirect_uri(request):
+        # Honour the proxy (Coolify/Traefik terminates TLS) so the callback URL
+        # matches the https:// URI registered in the GCP OAuth client.
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("host", request.url.netloc)
+        return f"{scheme}://{host}/auth/callback"
+
+    @rt("/auth/google", methods=["GET"])
+    async def google_login(request):
+        return await _oauth.google.authorize_redirect(request, _redirect_uri(request))
+
+    @rt("/auth/callback", methods=["GET"])
+    async def google_callback(request, sess):
+        try:
+            token = await _oauth.google.authorize_access_token(request)
+        except Exception:
+            return RedirectResponse("/login?error=Google+sign-in+failed", status_code=303)
+        info = token.get("userinfo") or {}
+        email = (info.get("email") or "").strip().lower()
+        if not email or not info.get("email_verified", True):
+            return RedirectResponse("/login?error=Google+did+not+return+a+verified+email",
+                                    status_code=303)
+        # Optional domain allow-list; existing users are always allowed in.
+        if (GOOGLE_ALLOWED_DOMAINS and email.split("@")[-1] not in GOOGLE_ALLOWED_DOMAINS
+                and not store.get_user_by_email(email)):
+            return RedirectResponse("/login?error=This+Google+account+is+not+permitted",
+                                    status_code=303)
+        user = store.get_or_create_oauth_user(email, info.get("name"))
+        sess["uid"] = user["id"]
+        sess["email"] = user["email"]
+        return RedirectResponse("/", status_code=303)
 
 
 # ── Admin: refresh the forms catalogue (scrape) from inside the container ──────
@@ -371,6 +480,7 @@ def left_pane(sess):
             A("Obligations", href="/obligations", cls="navlink"),
             A("📅 Calendar", href="/calendar", cls="navlink"),
             A("🗺 Coverage", href="/coverage", cls="navlink"),
+            A("🌐 AEOI / FATCA-CRS", href="/aeoi", cls="navlink"),
             A("Jurisdictions", href="/jurisdictions", cls="navlink"),
             A("Documents", href="/documents", cls="navlink"),
             A("Changes", href="/changes", cls="navlink"),
@@ -439,6 +549,7 @@ function renderMd(el){if(window.marked){el.innerHTML=linkMarkers(marked.parse(el
 function linkMarkers(h){
   h=h.replace(/\\[form:(\\d+)\\]/g,'<a href="#" onclick="openForm($1);return false">📄 open form</a>');
   h=h.replace(/\\[doc:(\\d+)\\]/g,'<a href="#" onclick="openDoc($1);return false">🔗 open doc</a>');
+  h=h.replace(/\\[w8:(\\d+)\\]/g,'<a href="#" onclick="openW8($1);return false">📝 open W-8 editor</a>');
   return h;}
 document.querySelectorAll('[data-md]').forEach(renderMd);
 function addBubble(role,html){var m=document.getElementById('msgs');
@@ -475,6 +586,38 @@ function openDoc(id){if(!id)return;var rb=document.getElementById('rbody');
   document.getElementById('rclose').textContent='✕';
   rb.innerHTML='<iframe class="pdf" src="/document/'+id+'?embed=1"></iframe>';}
 function closePdf(){location.reload();}
+const W8SYM={ok:['✓','#1c7c44'],error:['⚠','#c0392b'],warning:['⚠','#b06b00'],empty:['○','#9a93a6']};
+function openW8(id){var rb=document.getElementById('rbody');
+  if(!rb){window.open('/w8/'+id,'_blank');return;}
+  var t=document.getElementById('rtitle');if(t)t.textContent='W-8BEN-E editor';
+  var c=document.getElementById('rclose');if(c)c.textContent='✕';
+  fetch('/w8/'+id).then(r=>r.text()).then(h=>{rb.innerHTML=h;animateW8(id);});}
+function animateW8(id){var inps=document.querySelectorAll('#rbody .w8inp');var i=0;
+  (function step(){if(i>=inps.length){revalidateW8(id);return;}
+    var el=inps[i++];var val=el.getAttribute('data-fill')||'';
+    el.classList.add('w8filling');
+    if(!val){el.classList.remove('w8filling');setTimeout(step,90);return;}
+    var j=0;(function type(){el.value=val.slice(0,j++);
+      if(j<=val.length){setTimeout(type,12);}
+      else{el.classList.remove('w8filling');el.classList.add('w8filled');
+        setTimeout(()=>el.classList.remove('w8filled'),500);setTimeout(step,140);}})();
+  })();}
+function revalidateW8(id){var fd=new FormData();
+  document.querySelectorAll('#rbody .w8inp').forEach(el=>fd.append(el.name,el.value));
+  fetch('/w8/'+id+'/revalidate',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    for(var fid in d.badges){var b=d.badges[fid];var s=document.getElementById('badge-'+fid);
+      var sym=W8SYM[b.badge]||W8SYM.empty;if(s){s.textContent=sym[0];s.style.color=sym[1];s.title=b.hint||'';}
+      var hn=document.getElementById('hint-'+fid);
+      if(hn){hn.textContent=b.hint||'';hn.style.color=(b.badge==='error')?'#c0392b':(b.badge==='warning')?'#b06b00':'var(--muted)';}}
+    var rd={not_ready:['Not ready','#c0392b'],review:['Needs review','#b06b00'],ready:['Filing-ready','#1c7c44']}[d.readiness];
+    var r=document.getElementById('w8readiness');if(r&&rd){r.textContent=rd[0];r.style.color=rd[1];}
+    var n=document.getElementById('w8note');if(n)n.textContent='  — '+d.counts.error+' errors · '+d.counts.warning+' warnings. Edit any field and re-validate.';
+  });}
+function signoffW8(){var s=document.getElementById('w8stamp');if(!s)return;
+  var d=new Date().toISOString().slice(0,10);
+  s.innerHTML='✓ Signed off (demo) · '+d;s.style.display='block';}
+(function(){var w=new URLSearchParams(location.search).get('w8');
+  if(w&&document.getElementById('rbody'))setTimeout(function(){openW8(w);},500);})();
 """)
 
 
@@ -620,6 +763,12 @@ COPILOT_CTX = {
         "Which obligations are awaiting expert sign-off?",
         "List all economic-substance obligations",
         "What's due in the next 30 days?",
+    ],
+    "aeoi": [
+        "Which entities aren't filing-ready for FATCA/CRS?",
+        "Which entities have an expired or expiring W-8?",
+        "Fill the W-8BEN-E for Aurora Global Fund",
+        "Which FFIs are missing a GIIN?",
     ],
     "calendar": [
         "Which entities have economic-substance filings due before 30 September?",
@@ -1183,6 +1332,7 @@ def entity_view(sess, entity_id: int):
            Dt("Client ref"), Dd(e.get("client_ref") or "—"),
            Dt("Status"), Dd(e.get("status") or "—"), cls="formmeta"),
         ob_section,
+        Div(aeoi_entity_section(e, today), id="aeoi"),
         Form(Button("Delete entity", cls="btn",
                     style="background:#b0353a", onclick="return confirm('Delete this entity?')"),
              method="post", action=f"/entity/{entity_id}/delete", style="margin-top:18px"),
@@ -1331,6 +1481,200 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
                   Th("Status"), Th("Rule")), *rows)
          if rows else P("No obligations match.", cls="muted")),
         title="Calendar · TaxHub", ctx="calendar")
+
+
+def aeoi_readiness_badge(readiness):
+    r = aeoi.READINESS.get(readiness, aeoi.READINESS["review"])
+    return Span(r["label"],
+                style=f"display:inline-block;background:{r['color']}22;color:{r['color']};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
+
+
+_SEV_COLOR = {"error": "#c0392b", "warning": "#b06b00", "info": "#2c6fb0"}
+
+
+def aeoi_finding_row(f):
+    col = _SEV_COLOR.get(f["severity"], "#7a7a85")
+    return Tr(
+        Td(Span(f["severity"].upper(),
+                style=f"color:{col};font-weight:700;font-size:11px")),
+        Td(Code(f["rule"], style="font-size:11px;color:var(--muted)")),
+        Td(B(f["message"]), Br(),
+           Span(f["fix"], style="color:var(--muted);font-size:12px")))
+
+
+def aeoi_entity_section(entity, today):
+    """The AEOI panel shown on an entity page: classification, documentation,
+    controlling persons and the validation findings."""
+    v = aeoi.validate(entity, today=today)
+    p, cls = v["profile"], v["profile"]["classification"]
+    sc = p["self_cert"]
+    cps = p["controlling_persons"]
+    head = Div(
+        H2("AEOI · FATCA / CRS", style="display:inline-block;margin:0 12px 0 0"),
+        aeoi_readiness_badge(v["readiness"]),
+        Span(f"  {v['counts']['error']} errors · {v['counts']['warning']} warnings",
+             style="color:var(--muted);font-size:12px;margin-left:10px"),
+        A("📝 Fill W-8BEN-E", href=f"/?w8={entity['id']}", cls="btn",
+          style="margin-left:auto;font-size:12px;padding:6px 12px"),
+        style="display:flex;align-items:center;gap:8px;flex-wrap:wrap")
+    classification = Dl(
+        Dt("CRS classification"), Dd(cls["crs"]),
+        Dt("FATCA classification"), Dd(cls["fatca"]),
+        Dt("GIIN"), Dd(p.get("giin") or Span("— not held", style="color:#c0392b")),
+        Dt("Self-certification"),
+        Dd(f"{sc['form']} · signed {sc['signed']}",
+           (f" · expires {sc['expiry']}" if sc.get("expiry") else " · no expiry"),
+           (" · treaty claim" if sc.get("treaty_claim") else ""),
+           (f" · foreign TIN {sc['foreign_tin']}" if sc.get("foreign_tin")
+            else (Span(" · no foreign TIN", style="color:#c0392b")
+                  if sc.get("treaty_claim") else ""))),
+        cls="formmeta")
+    cp_block = ""
+    if cls["is_passive"]:
+        cp_rows = [Tr(Td(c["name"]), Td(JUR_NAMES.get(c.get("residence"), c.get("residence") or "—")),
+                      Td(c.get("tin") or Span("— missing", style="color:#c0392b")),
+                      Td("✓" if c.get("self_cert") else Span("— missing", style="color:#b06b00")))
+                   for c in cps]
+        cp_block = Div(
+            H3("Controlling persons", style="font-size:15px;margin:14px 0 6px"),
+            (Table(Tr(Th("Name"), Th("Tax residence"), Th("TIN"), Th("Self-cert")), *cp_rows)
+             if cp_rows else P("None identified.", cls="muted")))
+    findings_block = (
+        Table(Tr(Th("Severity"), Th("Rule"), Th("Finding & remediation")),
+              *[aeoi_finding_row(f) for f in v["findings"]])
+        if v["findings"] else
+        P("✓ No AEOI validation issues — this entity is filing-ready.",
+          style="color:#1c7c44"))
+    return Div(head, classification, cp_block,
+               H3("Validation", style="font-size:15px;margin:14px 0 6px"), findings_block,
+               style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px")
+
+
+@rt("/aeoi")
+def aeoi_view(sess, readiness: str = ""):
+    if (r := require(sess)):
+        return r
+    from datetime import date
+    today = date.today()
+    rows = aeoi.portfolio_aeoi(store, today)
+    summ = aeoi.portfolio_summary(rows)
+    if readiness:
+        rows = [r for r in rows if r["readiness"] == readiness]
+
+    def chip(k):
+        active = (k == readiness)
+        col = aeoi.READINESS[k]["color"]
+        return A(f"{aeoi.READINESS[k]['label']} {summ['by_readiness'].get(k, 0)}",
+                 href=f"/aeoi?readiness={'' if active else k}",
+                 style=f"display:inline-block;padding:5px 12px;border-radius:20px;"
+                       f"font-size:12px;font-weight:600;text-decoration:none;margin-right:6px;"
+                       f"border:1px solid {col};color:{'#fff' if active else col};"
+                       f"background:{col if active else 'transparent'}")
+    chips = Div(*[chip(k) for k in ("not_ready", "review", "ready")], style="margin:12px 0")
+    headline = Div(
+        Div(Span(f"{summ['ready_pct']}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" filing-ready", style="color:var(--muted)"), style="margin-bottom:6px"),
+        P(f"{summ['total']} entities · ",
+          Span(f"{summ['errors']} blocking errors", style="color:#c0392b;font-weight:600"),
+          " · ", Span(f"{summ['warnings']} warnings", style="color:#b06b00"),
+          style="color:var(--muted);font-size:13px"),
+        style="margin:8px 0")
+    rows_ui = [Tr(
+        Td(A(r["name"], href=f"/entity/{r['id']}#aeoi")),
+        Td(r.get("type") or "—"),
+        Td(JUR_NAMES.get(r.get("domicile"), r.get("domicile") or "—")),
+        Td(r["crs"]), Td(r["fatca"]),
+        Td(Span(str(r["counts"]["error"]),
+                style="color:#c0392b;font-weight:700" if r["counts"]["error"] else "color:var(--muted)")),
+        Td(Span(str(r["counts"]["warning"]),
+                style="color:#b06b00;font-weight:700" if r["counts"]["warning"] else "color:var(--muted)")),
+        Td(aeoi_readiness_badge(r["readiness"]))) for r in rows]
+    return Page(sess,
+        H1("AEOI readiness · FATCA / CRS"),
+        P("Automatic Exchange of Information readiness across the book. Each entity is "
+          "classified under CRS (Financial Institution vs Active / Passive NFE) and FATCA "
+          "(FFI / NFFE + GIIN), then validated for the documentation a return needs — "
+          "valid W-8 / self-certifications, treaty TINs, and controlling persons. "
+          "Modelled deterministically from each entity's profile; a human still signs off.",
+          cls="muted"),
+        headline, chips,
+        (Table(Tr(Th("Entity"), Th("Type"), Th("Domicile"), Th("CRS"), Th("FATCA"),
+                  Th("Errors"), Th("Warnings"), Th("Readiness")), *rows_ui)
+         if rows_ui else P("No entities match.", cls="muted")),
+        title="AEOI · TaxHub", ctx="aeoi")
+
+
+_W8_BADGE = {"ok": ("✓", "#1c7c44"), "error": ("⚠", "#c0392b"),
+             "warning": ("⚠", "#b06b00"), "empty": ("○", "#9a93a6")}
+
+
+def _w8_field(f):
+    sym, col = _W8_BADGE.get(f["badge"], _W8_BADGE["empty"])
+    return Div(
+        Div(Span(f"Line {f['line']}" if f["line"] != "—" else "", cls="w8ln"),
+            Label(f["label"], cls="w8lbl"),
+            Span(sym, cls="w8badge", id=f"badge-{f['id']}",
+                 title=f.get("hint") or "", style=f"color:{col}"),
+            cls="w8frow"),
+        Input(name=f["id"], id=f"w8-{f['id']}", value="", data_fill=f["value"],
+              cls="w8inp", autocomplete="off"),
+        Div(f.get("hint") or "", id=f"hint-{f['id']}", cls="w8hint",
+            style=("color:#c0392b" if f["badge"] == "error" else
+                   "color:#b06b00" if f["badge"] == "warning" else "color:var(--muted)")),
+        cls="w8field")
+
+
+def w8_render(data):
+    r = aeoi.READINESS.get(data["readiness"], aeoi.READINESS["review"])
+    sections = []
+    for s in data["sections"]:
+        sections.append(Div(
+            Div(Span(s["part"], cls="w8part"), Span(s["heading"], cls="w8head"),
+                cls="w8sec"),
+            *[_w8_field(f) for f in s["fields"]]))
+    return Div(
+        Div(Div(B(data["title"]), Span(" (demo facsimile)", cls="muted",
+                                       style="font-size:11px"),
+                Br(), Span(data["subtitle"], cls="muted", style="font-size:11px")),
+            cls="w8title"),
+        Div(Span("Status: "), Span(r["label"], id="w8readiness",
+            style=f"font-weight:700;color:{r['color']}"),
+            Span("  — agent filling from TaxHub data…", id="w8note", cls="muted",
+                 style="font-size:11px;margin-left:6px"),
+            cls="w8status"),
+        *sections,
+        Div(Button("Re-validate", cls="btn", type="button",
+                   onclick=f"revalidateW8({data['entity_id']})"),
+            Button("✓ Sign off", cls="btn", type="button",
+                   style="background:#1c7c44;margin-left:8px", onclick="signoffW8()"),
+            cls="w8actions"),
+        Div(id="w8stamp", cls="w8stamp"),
+        cls="w8form", data_entity=str(data["entity_id"]))
+
+
+@rt("/w8/{entity_id}")
+def w8_view(sess, entity_id: int):
+    if (r := require(sess)):
+        return r
+    e = store.get_entity(entity_id)
+    if not e:
+        return Div("Entity not found")
+    from datetime import date
+    data = w8form.fill(e, JUR_NAMES, date.today())
+    return w8_render(data)
+
+
+@rt("/w8/{entity_id}/revalidate", methods=["POST"])
+async def w8_revalidate(sess, request, entity_id: int):
+    if (require(sess)):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    e = store.get_entity(entity_id)
+    if not e:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    form = await request.form()
+    from datetime import date
+    return JSONResponse(w8form.revalidate(e, dict(form), date.today()))
 
 
 @rt("/coverage")

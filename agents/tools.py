@@ -193,4 +193,74 @@ def entity_agent(entity: str = "", category: str = "", status: str = "",
     return "\n".join(out)
 
 
-ALL_TOOLS = [document_agent, law_agent, metadata_agent, changes_agent, entity_agent]
+@tool
+def aeoi_agent(entity: str = "", readiness: str = "") -> str:
+    """Answer AEOI / FATCA / CRS READINESS questions about the administered entities —
+    their CRS classification (Financial Institution vs Active/Passive NFE), FATCA
+    classification (FFI/NFFE + GIIN), and whether they hold the documentation a
+    FATCA/CRS return needs: a valid W-8 / self-certification, a treaty TIN, and
+    identified controlling persons. Use for: "which entities aren't filing-ready for
+    FATCA/CRS?", "who has an expired or expiring W-8?", "which FFIs are missing a
+    GIIN?", "which Passive NFEs are missing controlling-person details?", "is Aurora
+    AEOI-ready?".
+
+    Params (optional):
+    - entity: name/client_ref substring to focus on one entity (blank = whole book).
+    - readiness: not_ready | review | ready — filter to that readiness band."""
+    from datetime import date
+    from web import aeoi
+    today = date.today()
+    ents = _resolve_entities(entity)
+    if not ents:
+        return "No entities found. Add entities under Navigate ▸ Entities."
+    out = []
+    for e in ents:
+        v = aeoi.validate(e, today=today)
+        if readiness and v["readiness"] != readiness:
+            continue
+        band = aeoi.READINESS[v["readiness"]]["label"]
+        head = (f"**[{e['name']}](/entity/{e['id']})** — {band} · "
+                f"CRS: {v['profile']['classification']['crs']} · "
+                f"FATCA: {v['profile']['classification']['fatca']}"
+                f"{' · GIIN held' if v['profile'].get('giin') else ' · no GIIN'}")
+        if v["findings"]:
+            head += "\n" + "\n".join(
+                f"  - {f['severity'].upper()}: {f['message']} ({f['fix']})"
+                for f in v["findings"])
+        else:
+            head += "\n  - ✓ Filing-ready: no AEOI validation issues."
+        out.append(head)
+    if not out:
+        return f"No entities in the '{readiness}' AEOI readiness band."
+    return "\n".join(out)
+
+
+@tool
+def w8_fill(entity: str) -> str:
+    """Complete a US **W-8BEN-E** (Certificate of Foreign Status, entity form) for an
+    administered entity, drawing every value from TaxHub's record + AEOI profile.
+    Use when the user asks to "fill / prepare / complete the W-8 (or W-8BEN-E) for
+    <entity>" or "show the W-8 for <entity>". The form opens in the right-hand pane
+    and fills in live for the user to review, edit and sign off.
+
+    ``entity`` is the entity name or client_ref. Returns a short note plus a
+    [w8:<id>] marker the UI turns into the live form editor."""
+    hits = _resolve_entities(entity)
+    if not hits:
+        return "No matching entity. Add it under Navigate ▸ Entities first."
+    # Pick the closest name match when the query is specific.
+    e = hits[0]
+    if entity:
+        q = entity.strip().lower()
+        named = [h for h in hits if q in (h.get("name") or "").lower()
+                 or q in (h.get("client_ref") or "").lower()]
+        if named:
+            e = named[0]
+    return (f"Preparing the **W-8BEN-E** for **[{e['name']}](/entity/{e['id']})** from its "
+            f"TaxHub profile (identity, FATCA classification, GIIN, treaty position and "
+            f"self-certification). It will fill in on the right for you to review and sign "
+            f"off. [w8:{e['id']}]")
+
+
+ALL_TOOLS = [document_agent, law_agent, metadata_agent, changes_agent, entity_agent,
+             aeoi_agent, w8_fill]
