@@ -85,3 +85,6 @@ See `SKILLS.md` for the full dev/test/deploy/Azure playbook.
   brand palette in `web/app.py` CSS (`--navy #6b1766` / `--accent #ba2a84`), and
   the `[service:N]`/`[sfo:N]`/`[rec:N]` markers in tool output that the UI parses.
 - All demo data is **synthetic** (`data/synth.py`). Never introduce real client data.
+- **Always regenerate the user guide with a date stamp**: `scripts/render_user_guide.py`
+  writes `docs/sfohub_user_guide_<YYYY-MM-DD>.pdf` and deletes the prior dated PDF
+  (the app serves the newest at `/user-guide-pdf`). See `SKILLS.md §9`.

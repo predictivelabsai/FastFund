@@ -1302,7 +1302,14 @@ HELP_SECTIONS = [
 def user_guide_pdf(sess):
     if require(sess):
         return RedirectResponse("/login", status_code=303)
-    return FileResponse("docs/sfohub_user_guide.pdf", media_type="application/pdf",
+    import glob
+    # Serve the newest date-stamped guide (docs/sfohub_user_guide_<date>.pdf),
+    # falling back to the legacy undated file.
+    dated = sorted(glob.glob("docs/sfohub_user_guide_*.pdf"))
+    path = dated[-1] if dated else "docs/sfohub_user_guide.pdf"
+    if not os.path.exists(path):
+        return JSONResponse({"error": "user guide not generated"}, status_code=404)
+    return FileResponse(path, media_type="application/pdf",
                         headers={"Content-Disposition": "inline; filename=sfohub-user-guide.pdf"})
 
 

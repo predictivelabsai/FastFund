@@ -1,6 +1,6 @@
 # SFO Hub — User Guide
 
-AI relationship-manager for JTC Private Office: a cross-sell & upsell advisor for single family offices. A slide version is at [`sfohub_user_guide.pdf`](sfohub_user_guide.pdf).
+AI relationship-manager for JTC Private Office: a cross-sell & upsell advisor for single family offices. A slide version is at [`sfohub_user_guide_2026-06-22.pdf`](sfohub_user_guide_2026-06-22.pdf).
 
 ## The advisor workspace
 

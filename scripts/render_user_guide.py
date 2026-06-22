@@ -6,18 +6,31 @@ The HTML deck is rendered to docs/sfohub_user_guide.pdf by screenshotting each
 `.slide` (1280×720) in a browser and stitching the PNGs with fpdf2 — so the PDF is
 "nicely formatted with HTML" (HTML/CSS controls every slide).
 
+The PDF is DATE-STAMPED — each regeneration writes docs/sfohub_user_guide_<YYYY-MM-DD>.pdf
+(override with --date YYYY-MM-DD). Old dated PDFs can be deleted/renamed; the app
+serves the newest one at /user-guide-pdf.
+
 Usage:
-  python scripts/render_user_guide.py html      # write the .html deck + the .md
-  python scripts/render_user_guide.py pdf <dir> # stitch slide PNGs in <dir> → .pdf
+  python scripts/render_user_guide.py html              # write the .html deck + the .md
+  python scripts/render_user_guide.py pdf <dir> [date]  # stitch slide PNGs in <dir> → dated .pdf
 """
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SHOTS = "screenshots"  # relative to docs/
+
+
+def _today():
+    return date.today().isoformat()
+
+
+def _pdf_name(stamp=None):
+    return f"sfohub_user_guide_{stamp or _today()}.pdf"
 
 # (id, title, image, [bullets])  — image None ⇒ text/section slide
 SLIDES = [
@@ -149,11 +162,11 @@ def write_html():
     print(f"wrote docs/sfohub_user_guide.html ({len(SLIDES)} slides)")
 
 
-def write_md():
+def write_md(stamp=None):
+    pdf = _pdf_name(stamp)
     out = ["# SFO Hub — User Guide\n",
            "AI relationship-manager for JTC Private Office: a cross-sell & upsell "
-           "advisor for single family offices. A slide version is at "
-           "[`sfohub_user_guide.pdf`](sfohub_user_guide.pdf).\n"]
+           f"advisor for single family offices. A slide version is at [`{pdf}`]({pdf}).\n"]
     for sid, title, img, bullets in SLIDES:
         if sid == "title":
             continue
@@ -166,7 +179,7 @@ def write_md():
     print("wrote docs/sfohub_user_guide.md")
 
 
-def build_pdf(shot_dir):
+def build_pdf(shot_dir, stamp=None):
     from fpdf import FPDF
     from PIL import Image
     pngs = sorted(Path(shot_dir).glob("slide-*.png"))
@@ -179,17 +192,31 @@ def build_pdf(shot_dir):
         Image.open(p).verify()
         pdf.add_page()
         pdf.image(str(p), x=0, y=0, w=pw, h=ph)
-    pdf.output(str(DOCS / "sfohub_user_guide.pdf"))
-    print(f"wrote docs/sfohub_user_guide.pdf ({len(pngs)} slides)")
+    name = _pdf_name(stamp)
+    # Remove any previous dated PDFs so only the latest is kept.
+    for old in DOCS.glob("sfohub_user_guide_*.pdf"):
+        if old.name != name:
+            old.unlink()
+    (DOCS / "sfohub_user_guide.pdf").unlink(missing_ok=True)  # drop the old undated one
+    pdf.output(str(DOCS / name))
+    print(f"wrote docs/{name} ({len(pngs)} slides)")
+
+
+def _arg(flag, default=None):
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else default
+    return default
 
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "html"
+    stamp = _arg("--date")
     if cmd == "html":
         write_html()
-        write_md()
+        write_md(stamp)
     elif cmd == "pdf":
-        build_pdf(sys.argv[2] if len(sys.argv) > 2 else "/tmp/ug_slides")
-    # expose slide ids for the screenshot driver
+        d = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else "/tmp/ug_slides"
+        build_pdf(d, stamp)
     elif cmd == "ids":
         print(" ".join(s[0] for s in SLIDES))

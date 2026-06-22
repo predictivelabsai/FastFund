@@ -271,7 +271,33 @@ instance id (not `neo4j`) — trust the downloaded credentials file.
 
 ---
 
-## 9. Project map
+## 9. Regenerating the docs
+
+### User guide (date-stamped)
+
+The end-user guide is a branded slide deck. **Always regenerate it with a date
+stamp** — each build writes `docs/sfohub_user_guide_<YYYY-MM-DD>.pdf` and the
+build deletes the previous dated PDF (keep only the latest; the app serves the
+newest at `/user-guide-pdf`).
+
+```bash
+python scripts/render_user_guide.py html        # writes docs/sfohub_user_guide.{html,md}
+# serve docs/ over http (e.g. python -m http.server 8088 --directory docs), open
+# /sfohub_user_guide.html in a 1320×780 browser and screenshot each .slide → a temp dir
+python scripts/render_user_guide.py pdf <dir>   # → docs/sfohub_user_guide_<today>.pdf
+#                                  [--date YYYY-MM-DD] to override the stamp
+```
+
+Screenshots live in `docs/screenshots/ug-*.png` (re-capture via Playwright only
+if the UI changed). The slide content/order is the `SLIDES` list in the script.
+
+### Architecture diagrams
+
+```bash
+python scripts/render_architecture.py    # docs/diagrams/*.png + technical_architecture_slides.pdf
+```
+
+## 10. Project map
 
 See `CLAUDE.md` for the architecture map and core invariants, and
 `docs/architecture_readme.md` for diagrams, the Azure deployment guide, and the
