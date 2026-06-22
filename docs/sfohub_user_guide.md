@@ -2,6 +2,15 @@
 
 AI relationship-manager for JTC Private Office: a cross-sell & upsell advisor for single family offices. A slide version is at [`sfohub_user_guide_2026-06-22.pdf`](sfohub_user_guide_2026-06-22.pdf).
 
+## A typical advisor journey
+
+1. **Open a family** — Pick a family office from the client book.
+2. **Understand them** — Profile, portfolio and pain points at a glance.
+3. **Ask the advisor** — Plain-English questions; specialist agents answer.
+4. **Review recommendations** — Traceable cross-sell and upsell, ranked by fit.
+5. **Work the pipeline** — Advance cards: suggested → presented → accepted.
+6. **Convert and book** — Schedule, propose and book the engagement.
+
 ## The advisor workspace
 
 ![The advisor workspace](screenshots/ug-01-advisor.png)

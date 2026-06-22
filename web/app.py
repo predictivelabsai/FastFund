@@ -1328,6 +1328,37 @@ def ug_asset(sess, name: str):
     return FileResponse(path, media_type="image/png")
 
 
+# Introductory happy-flow shown at the top of the user guide (mirrors the slide deck).
+JOURNEY_STEPS = [
+    ("Open a family", "Pick a family office from the client book."),
+    ("Understand them", "Profile, portfolio and pain points at a glance."),
+    ("Ask the advisor", "Plain-English questions; specialist agents answer."),
+    ("Review recommendations", "Traceable cross-sell and upsell, ranked by fit."),
+    ("Work the pipeline", "Advance cards: suggested → presented → accepted."),
+    ("Convert and book", "Schedule, propose and book the engagement."),
+]
+
+
+def journey_ribbon():
+    cards = []
+    for i, (t, d) in enumerate(JOURNEY_STEPS, 1):
+        cards.append(Div(
+            Div(str(i), style="width:30px;height:30px;border-radius:50%;background:var(--navy);"
+                "color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;"
+                "margin-bottom:10px"),
+            B(t, style="color:#550055;font-size:14px;display:block;margin-bottom:5px;line-height:1.2"),
+            Span(d, style="color:var(--muted);font-size:12.5px;line-height:1.4"),
+            style="flex:1 1 150px;min-width:150px;background:#fff;border:1px solid var(--line);"
+                  "border-top:3px solid var(--accent);border-radius:10px;padding:13px 13px 15px;"
+                  "box-shadow:0 4px 14px rgba(85,0,85,.06)"))
+    return Div(
+        H2("A typical advisor journey", style="margin:6px 0 4px"),
+        Div(*cards, style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px"),
+        P(I("From a cold lead to a booked engagement — the advisor supports every step."),
+          style="color:var(--muted);font-size:13px;text-align:center;margin-top:6px"),
+        style="margin:14px 0")
+
+
 @rt("/help")
 def help_page(sess):
     if (r := require(sess)):
@@ -1349,6 +1380,7 @@ def help_page(sess):
           "engages family-office principals in natural dialogue, analyses their profile "
           "and portfolio, and surfaces personalised, traceable cross-sell and upsell "
           "recommendations — a transparent rule engine plus AI scoring.", style="font-size:15px"),
+        journey_ribbon(),
         Div(Div(B("Quick start "), "Open a family from the ", B("Client book"),
                 ", chat with the advisor about their gaps, then work the ", B("Pipeline"),
                 " and ", B("Calendar"), " to convert opportunities.",

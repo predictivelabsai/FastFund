@@ -281,15 +281,17 @@ build deletes the previous dated PDF (keep only the latest; the app serves the
 newest at `/user-guide-pdf`).
 
 ```bash
-python scripts/render_user_guide.py html        # writes docs/sfohub_user_guide.{html,md}
-# serve docs/ over http (e.g. python -m http.server 8088 --directory docs), open
-# /sfohub_user_guide.html in a 1320×780 browser and screenshot each .slide → a temp dir
-python scripts/render_user_guide.py pdf <dir>   # → docs/sfohub_user_guide_<today>.pdf
-#                                  [--date YYYY-MM-DD] to override the stamp
+python scripts/render_user_guide.py all   # html + md + dated pdf, one command
+#   [--date YYYY-MM-DD] to override the stamp
+# or run the steps separately: `... html` (deck + md), `... pdf` (dated PDF)
 ```
 
-Screenshots live in `docs/screenshots/ug-*.png` (re-capture via Playwright only
-if the UI changed). The slide content/order is the `SLIDES` list in the script.
+The PDF is built by headless Chrome's `--print-to-pdf` over a print copy of the
+deck (one `.slide` per 1280×720 page) — no manual screenshotting of slides. The
+in-app screenshots in `docs/screenshots/ug-*.png` are embedded (re-capture via
+Playwright only if the UI changed). The slide content/order is the `SLIDES` list
+in the script; the intro "advisor journey" happy-flow slide mirrors the
+`JOURNEY_STEPS` ribbon on the in-app `/help` page (`web/app.py`).
 
 ### Architecture diagrams
 

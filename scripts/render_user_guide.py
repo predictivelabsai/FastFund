@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Build the SFO Hub user guide: a branded, landscape HTML slide deck →
-docs/sfohub_user_guide.html, plus docs/sfohub_user_guide.md.
+docs/sfohub_user_guide.html, plus docs/sfohub_user_guide.md and the dated PDF.
 
-The HTML deck is rendered to docs/sfohub_user_guide.pdf by screenshotting each
-`.slide` (1280×720) in a browser and stitching the PNGs with fpdf2 — so the PDF is
-"nicely formatted with HTML" (HTML/CSS controls every slide).
+The PDF is produced by headless Chrome's `--print-to-pdf` over a print-oriented
+copy of the deck (each `.slide` is one 1280×720 page) — so the HTML/CSS controls
+every slide and the brand footer stays intact. No screenshots needed for the deck
+chrome itself; only the in-app screenshots in docs/screenshots/ are embedded.
 
 The PDF is DATE-STAMPED — each regeneration writes docs/sfohub_user_guide_<YYYY-MM-DD>.pdf
-(override with --date YYYY-MM-DD). Old dated PDFs can be deleted/renamed; the app
+(override with --date YYYY-MM-DD) and deletes the previous dated PDF. The app
 serves the newest one at /user-guide-pdf.
 
 Usage:
-  python scripts/render_user_guide.py html              # write the .html deck + the .md
-  python scripts/render_user_guide.py pdf <dir> [date]  # stitch slide PNGs in <dir> → dated .pdf
+  python scripts/render_user_guide.py html          # write the .html deck + the .md
+  python scripts/render_user_guide.py pdf [--date YYYY-MM-DD]   # → dated .pdf via Chrome
+  python scripts/render_user_guide.py all [--date ...]         # html + md + pdf
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -23,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SHOTS = "screenshots"  # relative to docs/
+CHROME_CANDIDATES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
 
 
 def _today():
@@ -38,6 +43,13 @@ SLIDES = [
         "AI relationship-manager for JTC Private Office",
         "Cross-sell & upsell advisor for single family offices",
         "User Guide"]),
+    ("journey", "A typical advisor journey", "JOURNEY", [
+        "Open a family||Pick a family office from the client book.",
+        "Understand them||Profile, portfolio and pain points at a glance.",
+        "Ask the advisor||Plain-English questions; specialist agents answer.",
+        "Review recommendations||Traceable cross-sell and upsell, ranked by fit.",
+        "Work the pipeline||Advance cards: suggested → presented → accepted.",
+        "Convert and book||Schedule, propose and book the engagement."]),
     ("advisor", "The advisor workspace", "ug-01-advisor.png", [
         "Three panes: client book + navigation (left), the AI advisor (centre), "
         "and the open family's profile + live recommendations (right).",
@@ -130,6 +142,18 @@ h2{color:#6b1766;font-size:34px;margin-bottom:18px}
 .title-slide .sub.small{font-size:20px;color:#7a7a85;margin-top:8px}
 .section .body{justify-content:center}
 .section .bul{flex:0 0 100%}.section .bul li{font-size:22px;margin:18px 0}
+/* journey / happy-flow ribbon */
+.journey .flow{display:flex;align-items:stretch;flex:1;margin-top:8px}
+.step{flex:1;background:#fff;border:1px solid #ecdce8;border-top:4px solid #ba2a84;
+  border-radius:10px;padding:18px 15px;display:flex;flex-direction:column;
+  box-shadow:0 6px 18px rgba(85,0,85,.08)}
+.num{width:36px;height:36px;border-radius:50%;background:#6b1766;color:#fff;
+  font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;
+  margin-bottom:14px}
+.stt{color:#550055;font-weight:700;font-size:18px;margin-bottom:9px;line-height:1.2}
+.std{color:#5a5a62;font-size:14px;line-height:1.45}
+.arr{display:flex;align-items:center;color:#ba2a84;font-size:26px;font-weight:700;padding:0 5px}
+.jnote{margin-top:22px;color:#7a7a85;font-size:16px;text-align:center}
 """
 
 
@@ -144,6 +168,18 @@ def _slide_html(s):
                 f'<div class="sub small">{bullets[1]}</div>'
                 f'<div class="sub" style="margin-top:26px;color:#6b1766;font-weight:700">'
                 f'{bullets[2]}</div></div>{foot}</div>')
+    if img == "JOURNEY":
+        steps = ""
+        for i, b in enumerate(bullets, 1):
+            t, d = b.split("||")
+            steps += (f'<div class="step"><div class="num">{i}</div>'
+                      f'<div class="stt">{t}</div><div class="std">{d}</div></div>')
+            if i < len(bullets):
+                steps += '<div class="arr">→</div>'
+        return (f'<div class="slide journey" id="{sid}"><div class="bar"></div>'
+                f'<div class="body"><h2>{title}</h2><div class="flow">{steps}</div>'
+                f'<div class="jnote">From a cold lead to a booked engagement — the '
+                f'advisor supports every step.</div></div>{foot}</div>')
     lis = "".join(f"<li>{b}</li>" for b in bullets)
     if img is None:
         return (f'<div class="slide section" id="{sid}"><div class="bar"></div>'
@@ -171,6 +207,12 @@ def write_md(stamp=None):
         if sid == "title":
             continue
         out.append(f"## {title}\n")
+        if img == "JOURNEY":
+            for i, b in enumerate(bullets, 1):
+                t, d = b.split("||")
+                out.append(f"{i}. **{t}** — {d}")
+            out.append("")
+            continue
         if img:
             out.append(f"![{title}]({SHOTS}/{img})\n")
         out += [f"- {b}" for b in bullets]
@@ -179,27 +221,40 @@ def write_md(stamp=None):
     print("wrote docs/sfohub_user_guide.md")
 
 
-def build_pdf(shot_dir, stamp=None):
-    from fpdf import FPDF
-    from PIL import Image
-    pngs = sorted(Path(shot_dir).glob("slide-*.png"))
-    if not pngs:
-        sys.exit(f"no slide-*.png in {shot_dir}")
-    pw, ph = 254.0, 142.875  # 16:9 landscape mm
-    pdf = FPDF(orientation="L", unit="mm", format=(ph, pw))
-    pdf.set_auto_page_break(False)
-    for p in pngs:
-        Image.open(p).verify()
-        pdf.add_page()
-        pdf.image(str(p), x=0, y=0, w=pw, h=ph)
+def _print_deck_html():
+    """A print-oriented copy of the deck: one .slide per 1280×720 page."""
+    print_css = CSS + (
+        "\n@page{size:1280px 720px;margin:0}\nhtml,body{background:#fff}\n"
+        ".slide{margin:0 !important;page-break-after:always;break-after:page;box-shadow:none}\n"
+        ".slide:last-child{page-break-after:auto;break-after:auto}\n")
+    body = "\n".join(_slide_html(s) for s in SLIDES)
+    return (f"<!doctype html><html><head><meta charset='utf-8'>"
+            f"<title>SFO Hub — User Guide</title><style>{print_css}</style></head>"
+            f"<body>{body}</body></html>")
+
+
+def build_pdf(stamp=None):
+    chrome = next((c for c in CHROME_CANDIDATES if shutil.which(c)), None)
+    if not chrome:
+        sys.exit(f"no Chrome/Chromium on PATH (tried {', '.join(CHROME_CANDIDATES)})")
+    deck = DOCS / "_print_deck.html"
+    deck.write_text(_print_deck_html())  # in docs/ so screenshots/ resolves relatively
     name = _pdf_name(stamp)
-    # Remove any previous dated PDFs so only the latest is kept.
+    # Keep only the latest dated PDF (and drop the legacy undated one).
     for old in DOCS.glob("sfohub_user_guide_*.pdf"):
         if old.name != name:
             old.unlink()
-    (DOCS / "sfohub_user_guide.pdf").unlink(missing_ok=True)  # drop the old undated one
-    pdf.output(str(DOCS / name))
-    print(f"wrote docs/{name} ({len(pngs)} slides)")
+    (DOCS / "sfohub_user_guide.pdf").unlink(missing_ok=True)
+    out = DOCS / name
+    try:
+        subprocess.run(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+             "--no-pdf-header-footer", "--virtual-time-budget=4000",
+             f"--print-to-pdf={out}", deck.resolve().as_uri()],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        deck.unlink(missing_ok=True)
+    print(f"wrote docs/{name} ({len(SLIDES)} slides)")
 
 
 def _arg(flag, default=None):
@@ -212,11 +267,10 @@ def _arg(flag, default=None):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "html"
     stamp = _arg("--date")
-    if cmd == "html":
+    if cmd in ("html", "all"):
         write_html()
         write_md(stamp)
-    elif cmd == "pdf":
-        d = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else "/tmp/ug_slides"
-        build_pdf(d, stamp)
-    elif cmd == "ids":
+    if cmd in ("pdf", "all"):
+        build_pdf(stamp)
+    if cmd == "ids":
         print(" ".join(s[0] for s in SLIDES))
