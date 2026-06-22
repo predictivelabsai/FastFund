@@ -140,6 +140,9 @@ padding:11px 13px;margin-bottom:11px;font-size:13px;background:#fff}
 .btn.sm{padding:4px 10px;font-size:12px}
 .form{background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px;max-width:380px;margin:60px auto}
 .form input{width:100%;padding:10px;border:1px solid var(--line);border-radius:7px;margin:6px 0 14px}
+.pwwrap{position:relative}.pwwrap input{padding-right:42px}
+.pweye{position:absolute;right:6px;top:13px;background:none;border:none;cursor:pointer;
+font-size:16px;line-height:1;padding:4px;color:var(--muted)}.pweye:hover{color:var(--navy)}
 .wrap{max-width:1180px;margin:0 auto;padding:26px 30px}
 h1{color:var(--navy);font-size:24px;margin:0 0 4px}h2{color:var(--navy);font-size:17px;margin:22px 0 8px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
@@ -206,6 +209,50 @@ app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET
                    pico=False)
 
 
+# ── Google OAuth (optional — enabled when client id + secret are set) ─────────
+# Mirrors TaxHub: OIDC via Authlib, /auth/google → Google consent → /auth/callback.
+# Set GOOGLE_ALLOWED_DOMAINS (comma-separated, e.g. "jtcgroup.com") to restrict
+# sign-up to those email domains; existing accounts are always allowed. Unset ⇒
+# any Google account may sign in.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in os.environ.get("GOOGLE_ALLOWED_DOMAINS", "").split(",") if d.strip()]
+OAUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+_oauth = None
+if OAUTH_ENABLED:
+    from authlib.integrations.starlette_client import OAuth as _AuthlibOAuth
+    _oauth = _AuthlibOAuth()
+    _oauth.register(
+        name="google", client_id=GOOGLE_CLIENT_ID, client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"})
+
+_GOOGLE_SVG = ('<svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:-4px;'
+               'margin-right:9px"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844'
+               'c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 '
+               '2.684-6.615z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908'
+               '-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 '
+               '8.997 0 009 18z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593'
+               '.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9s.38 1.572.957 3.042l3.007-2.332z" '
+               'fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 '
+               '11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" '
+               'fill="#EA4335"/></svg>')
+
+
+def _google_button():
+    return Div(
+        Div(Span(style="flex:1;height:1px;background:var(--line)"),
+            Span("or", style="color:#9aa3ab;font-size:12px;padding:0 10px"),
+            Span(style="flex:1;height:1px;background:var(--line)"),
+            style="display:flex;align-items:center;margin:18px 0 14px"),
+        A(NotStr(_GOOGLE_SVG), "Continue with Google", href="/auth/google",
+          style="display:flex;align-items:center;justify-content:center;width:100%;"
+                "padding:10px;border:1px solid var(--line);border-radius:7px;color:var(--text);"
+                "font-size:14px;font-weight:600;text-decoration:none;background:#fff"))
+
+
 @rt("/health")
 def health():
     return JSONResponse({"status": "ok"})
@@ -266,15 +313,24 @@ def login_form(sess, error: str = ""):
         H2("SFO Hub"), P("Single-Family Office (SFO) AI Advisor", style="color:#6b7686"),
         (P(error, style="color:#c0392b") if error else ""),
         Input(name="email", placeholder="Email", type="email"),
-        Input(name="password", placeholder="Password", type="password"),
+        Div(Input(name="password", placeholder="Password", type="password", id="pw"),
+            Button("👁", type="button", cls="pweye", id="pweye", onclick="togglePw(this)",
+                   aria_label="Show password", aria_pressed="false"),
+            cls="pwwrap"),
         Button("Sign in", cls="btn", style="width:100%"),
+        Script("function togglePw(b){var i=document.getElementById('pw');"
+               "var s=i.type==='password';i.type=s?'text':'password';"
+               "b.textContent=s?'🙈':'👁';"
+               "b.setAttribute('aria-label',s?'Hide password':'Show password');"
+               "b.setAttribute('aria-pressed',s?'true':'false');i.focus();}"),
+        (_google_button() if OAUTH_ENABLED else ""),
         method="post", action="/login", cls="form")
 
 
 @rt("/login", methods=["POST"])
 def login_submit(sess, email: str = "", password: str = ""):
     import bcrypt
-    user = store.get_user_by_email(email)
+    user = store.get_user_by_email((email or "").strip().lower())
     if user and user.get("password_hash") and bcrypt.checkpw(
             password.encode(), user["password_hash"].encode()):
         sess["uid"] = user["id"]
@@ -287,6 +343,40 @@ def login_submit(sess, email: str = "", password: str = ""):
 def logout(sess):
     sess.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# ── Google OAuth: redirect to Google, then handle the callback ────────────────
+if OAUTH_ENABLED:
+    def _redirect_uri(request):
+        # Honour the proxy (Coolify/Cloudflare terminate TLS) so the callback URL
+        # matches the https:// URI registered in the GCP OAuth client.
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("host", request.url.netloc)
+        return f"{scheme}://{host}/auth/callback"
+
+    @rt("/auth/google", methods=["GET"])
+    async def google_login(request):
+        return await _oauth.google.authorize_redirect(request, _redirect_uri(request))
+
+    @rt("/auth/callback", methods=["GET"])
+    async def google_callback(request, sess):
+        try:
+            token = await _oauth.google.authorize_access_token(request)
+        except Exception:  # noqa: BLE001
+            return RedirectResponse("/login?error=Google+sign-in+failed", status_code=303)
+        info = token.get("userinfo") or {}
+        email = (info.get("email") or "").strip().lower()
+        if not email or not info.get("email_verified", True):
+            return RedirectResponse("/login?error=Google+did+not+return+a+verified+email",
+                                    status_code=303)
+        if (GOOGLE_ALLOWED_DOMAINS and email.split("@")[-1] not in GOOGLE_ALLOWED_DOMAINS
+                and not store.get_user_by_email(email)):
+            return RedirectResponse("/login?error=This+Google+account+is+not+permitted",
+                                    status_code=303)
+        user = store.get_or_create_oauth_user(email, info.get("name"))
+        sess["uid"] = user["id"]
+        sess["email"] = user["email"]
+        return RedirectResponse("/", status_code=303)
 
 
 # ── Shared chrome ──────────────────────────────────────────────────────────────

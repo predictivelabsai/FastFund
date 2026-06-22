@@ -90,6 +90,15 @@ def test_conversations(store):
     assert store.list_conversations(user_email="admin@jtcgroup.com")[0]["id"] == cid
 
 
+def test_oauth_user(store):
+    u1 = store.get_or_create_oauth_user("Jane.Doe@Example.com", "Jane Doe")
+    assert u1["email"] == "jane.doe@example.com"
+    u2 = store.get_or_create_oauth_user("jane.doe@example.com")
+    assert u2["id"] == u1["id"]  # idempotent
+    rec = store.get_user_by_email("jane.doe@example.com")
+    assert rec and rec["role"] == "user" and rec["password_hash"] is None
+
+
 def test_family_members(store):
     sid = store.upsert_sfo({"client_ref": "F-1", "name": "Fam FO"})
     mid = store.upsert_family_member({"sfo_id": sid, "name": "Anna", "role": "principal",

@@ -82,15 +82,26 @@ class Neo4jStore(Storage):
         self._seed_admin()
 
     def _seed_admin(self) -> None:
+        # Always (re)set the admin password to ADMIN_PASSWORD so the team can't be
+        # locked out by a changed env value or a stale hash.
         email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
         pw = os.environ.get("ADMIN_PASSWORD", "change-me")
-        if self.get_user_by_email(email):
-            return
         import bcrypt
         h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
         self._write("MERGE (u:User {email:$e}) "
-                    "ON CREATE SET u.password_hash=$h, u.role='admin', u.created_at=$t",
+                    "ON CREATE SET u.created_at=$t "
+                    "SET u.password_hash=$h, u.role='admin'",
                     e=email, h=h, t=utcnow())
+
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        email = (email or "").strip().lower()
+        existing = self.get_user_by_email(email)
+        if existing:
+            return {"id": existing["id"], "email": email}
+        self._write("MERGE (u:User {email:$e}) "
+                    "ON CREATE SET u.password_hash=null, u.role='user', u.created_at=$t",
+                    e=email, t=utcnow())
+        return {"id": email, "email": email}
 
     # ── Users ────────────────────────────────────────────────────────────────
     def get_user_by_email(self, email: str) -> dict | None:

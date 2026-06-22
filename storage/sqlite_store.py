@@ -114,16 +114,20 @@ class SqliteStore(Storage):
         self._seed_admin()
 
     def _seed_admin(self) -> None:
+        # Upsert the admin and ALWAYS (re)set its password to ADMIN_PASSWORD so a
+        # changed env value or a stale hash can't lock the team out.
         email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
         pw = os.environ.get("ADMIN_PASSWORD", "change-me")
-        if self.get_user_by_email(email):
-            return
         import bcrypt
         h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
         with self._conn() as c:
-            c.execute(text("INSERT INTO users(email,password_hash,role,created_at)"
-                           " VALUES(:e,:h,'admin',:t)"),
-                      {"e": email, "h": h, "t": utcnow()})
+            if self.get_user_by_email(email):
+                c.execute(text("UPDATE users SET password_hash=:h, role='admin' WHERE email=:e"),
+                          {"h": h, "e": email})
+            else:
+                c.execute(text("INSERT INTO users(email,password_hash,role,created_at)"
+                               " VALUES(:e,:h,'admin',:t)"),
+                          {"e": email, "h": h, "t": utcnow()})
 
     # ── Users ──────────────────────────────────────────────────────────────
     def get_user_by_email(self, email: str) -> dict | None:
@@ -131,6 +135,17 @@ class SqliteStore(Storage):
             r = c.execute(text("SELECT id,email,password_hash,role FROM users"
                                " WHERE email=:e"), {"e": email}).first()
         return self._row(r)
+
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        email = (email or "").strip().lower()
+        with self._conn() as c:
+            row = c.execute(text("SELECT id FROM users WHERE email=:e"), {"e": email}).first()
+            if row:
+                return {"id": row[0], "email": email}
+            c.execute(text("INSERT INTO users(email,password_hash,role,created_at)"
+                           " VALUES(:e,NULL,'user',:t)"), {"e": email, "t": utcnow()})
+            row = c.execute(text("SELECT id FROM users WHERE email=:e"), {"e": email}).first()
+            return {"id": row[0], "email": email}
 
     # ── SFOs ───────────────────────────────────────────────────────────────
     def upsert_sfo(self, sfo: dict) -> int:

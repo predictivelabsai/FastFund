@@ -82,6 +82,12 @@ class Storage(abc.ABC):
     def get_user_by_email(self, email: str) -> dict | None:
         """Return ``{id, email, password_hash, role}`` for a user, or None."""
 
+    @abc.abstractmethod
+    def get_or_create_oauth_user(self, email: str, name: str | None = None) -> dict:
+        """Return ``{id, email}`` for the user with ``email``, creating a
+        password-less account (role ``user``) on first sign-in. Used by the
+        Google OAuth flow, where there is no local password."""
+
     # ── SFO client profiles ────────────────────────────────────────────────
     # The family-office records the relationship manager talks to. ``asset_mix``
     # is a ``{asset_class: percent}`` dict; ``jurisdictions``, ``current_services``
