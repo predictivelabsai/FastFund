@@ -183,12 +183,15 @@ border-bottom:3px solid var(--line);font-size:11.5px;font-weight:700;text-transf
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
 PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
 VISNET = Script(src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js")
+# Faceted diamond gem in the JTC brand palette (navy pavilion, accent crown).
 FAVICON = Link(rel="icon", type="image/svg+xml",
                href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
-                    "viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' "
-                    "fill='%236b1766'/%3E%3Ctext x='16' y='22' font-family='Arial' "
-                    "font-size='16' font-weight='700' fill='%23ba2a84' "
-                    "text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E")
+                    "viewBox='0 0 32 32'%3E"
+                    "%3Cpolygon points='3,12 29,12 16,30' fill='%236b1766'/%3E"
+                    "%3Cpolygon points='3,12 10,4 22,4 29,12' fill='%23ba2a84'/%3E"
+                    "%3Cpolygon points='10,4 22,4 19,12 13,12' fill='%23d264a9'/%3E"
+                    "%3Cpolygon points='13,12 19,12 16,30' fill='%23581460'/%3E"
+                    "%3C/svg%3E")
 
 
 def current_user(sess):
