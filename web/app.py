@@ -222,6 +222,7 @@ display:flex;align-items:center;justify-content:space-between}
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
+FAVICON = Link(rel="icon", type="image/svg+xml", href="/static/favicon.svg")
 PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
 VISNET = Script(src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js")
 
@@ -244,7 +245,7 @@ def require(sess):
     return None
 
 
-app, rt = fast_app(hdrs=(MARKED,), secret_key=os.environ.get("APP_SECRET", "taxhub-2026"),
+app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "taxhub-2026"),
                    pico=False)
 
 
@@ -303,6 +304,8 @@ def _google_button():
 @rt("/health")
 def health():
     return JSONResponse({"status": "ok"})
+
+
 
 
 @rt("/login", methods=["GET"])
