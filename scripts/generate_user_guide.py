@@ -29,6 +29,22 @@ SLIDES = [
         "Tax-law traceability & filing intelligence for fund back-office",
         "Ask in plain English; every answer cites the source law",
         "User Guide"]),
+    ("journey", "A typical journey — from onboarding to filed", None, [
+        "<b>1 · Onboard the book.</b> Add or CSV-import the funds, SPVs, GPs and "
+        "trusts you administer — each with its domicile, operating jurisdictions, "
+        "financial year-end and activities.",
+        "<b>2 · Determine what's owed.</b> One click matches each entity to the "
+        "expert-curated forms catalogue and generates its filing obligations — "
+        "deterministically, with no guesswork.",
+        "<b>3 · See the deadlines.</b> The calendar resolves every rule into a real "
+        "date from the entity's year-end, flagging what's overdue or due soon.",
+        "<b>4 · Check AEOI readiness.</b> The FATCA / CRS dashboard classifies each "
+        "entity and validates its W-8s, GIIN and controlling persons before any "
+        "return is filed.",
+        "<b>5 · Let the agent prepare the form.</b> Ask the assistant to fill a "
+        "W-8BEN-E; it fills in live, validates each field, and you edit and sign off.",
+        "<b>6 · File, verify and stay current.</b> Mark obligations filed and sign "
+        "them off, while the changes feed and cited tax-law answers keep you ahead."]),
     ("assistant", "The Assistant workspace", "ug-01-assistant.png", [
         "Three panes: navigation + forms tree + shortcuts (left), the AI "
         "assistant (centre), and a live regulatory-changes feed (right).",
@@ -144,7 +160,8 @@ h2{color:#6b1766;font-size:34px;margin-bottom:18px}
 .title-slide .sub{font-size:26px;color:#48484f;margin-top:18px}
 .title-slide .sub.small{font-size:20px;color:#7a7a85;margin-top:8px}
 .section .body{justify-content:center}
-.section .bul{flex:0 0 100%}.section .bul li{font-size:22px;margin:18px 0}
+.section .bul{flex:0 0 100%}.section .bul li{font-size:18px;margin:13px 0;line-height:1.45}
+.section .bul li b{color:#6b1766}
 """
 
 FOOT = ('<div class="foot"><span class="b">Tax<span>Hub</span></span>'

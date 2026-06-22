@@ -2,6 +2,15 @@
 
 Tax-law traceability & filing intelligence for fund back-office: ask in plain English and every answer cites the source law. A slide version is at [`taxhub_user_guide.pdf`](taxhub_user_guide.pdf).
 
+## A typical journey — from onboarding to filed
+
+- <b>1 · Onboard the book.</b> Add or CSV-import the funds, SPVs, GPs and trusts you administer — each with its domicile, operating jurisdictions, financial year-end and activities.
+- <b>2 · Determine what's owed.</b> One click matches each entity to the expert-curated forms catalogue and generates its filing obligations — deterministically, with no guesswork.
+- <b>3 · See the deadlines.</b> The calendar resolves every rule into a real date from the entity's year-end, flagging what's overdue or due soon.
+- <b>4 · Check AEOI readiness.</b> The FATCA / CRS dashboard classifies each entity and validates its W-8s, GIIN and controlling persons before any return is filed.
+- <b>5 · Let the agent prepare the form.</b> Ask the assistant to fill a W-8BEN-E; it fills in live, validates each field, and you edit and sign off.
+- <b>6 · File, verify and stay current.</b> Mark obligations filed and sign them off, while the changes feed and cited tax-law answers keep you ahead.
+
 ## The Assistant workspace
 
 ![The Assistant workspace](screenshots/ug-01-assistant.png)

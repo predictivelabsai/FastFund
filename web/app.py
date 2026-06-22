@@ -1909,7 +1909,8 @@ def help_page(sess):
         P("TaxHub helps a fund back office find the correct tax form to file, with "
           "provenance back to the underlying law. Use the AI Assistant for free-text "
           "questions, the Forms Tree to browse, or the shortcuts below.", cls="muted"),
-        P(A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn"), " ",
+        P(A("📖 Open the User Guide (HTML slides)", href="/docs/taxhub_user_guide.html", target="_blank", cls="btn"), " ",
+          A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn"), " ",
           A("🛠 Technical Guide (architecture & Azure deployment)", href="/technical-guide", cls="btn")),
         H2("Filing types"),
         P("Every form is labelled by how it is filed:"),
@@ -1983,6 +1984,8 @@ def technical_guide_raw(sess):
     if not html:
         return Response("Not generated", status_code=404)
     return Response(html, media_type="text/html")
+
+
 
 
 @rt("/changes")
