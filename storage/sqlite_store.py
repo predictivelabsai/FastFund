@@ -230,6 +230,38 @@ class SqliteStore(Storage):
             expires_at TEXT,
             used_at    TEXT
         )""",
+        # ── Chat feedback / evals / event log ───────────────────────────────
+        # 👍/👎 on an assistant message (rating: 1 / -1), keyed by message id.
+        """CREATE TABLE IF NOT EXISTS chat_feedback (
+            message_id INTEGER PRIMARY KEY,
+            session_id INTEGER,
+            user_email TEXT,
+            team_id    INTEGER,
+            rating     INTEGER,
+            comment    TEXT,
+            created_at TEXT
+        )""",
+        # LLM-as-judge score for an assistant message (Phase E runner writes this).
+        """CREATE TABLE IF NOT EXISTS chat_judge (
+            message_id   INTEGER PRIMARY KEY,
+            score        INTEGER,
+            verdict      TEXT,
+            relevance    INTEGER,
+            groundedness INTEGER,
+            completeness INTEGER,
+            reason       TEXT,
+            model        TEXT,
+            created_at   TEXT
+        )""",
+        # Generic append-only event log (logins, invites, feedback, chat turns…).
+        """CREATE TABLE IF NOT EXISTS events (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT,
+            type       TEXT,
+            user_email TEXT,
+            team_id    INTEGER,
+            data       TEXT
+        )""",
     ]
 
     INDEXES = [
@@ -1041,14 +1073,15 @@ class SqliteStore(Storage):
                 {"e": user_email, "tid": team_id, "t": title or "New chat", "now": now})
             return res.lastrowid
 
-    def add_chat_message(self, session_id: int, role: str, content: str) -> None:
+    def add_chat_message(self, session_id: int, role: str, content: str) -> int:
         now = utcnow()
         with self.conn() as c:
-            c.execute(text("INSERT INTO chat_messages (session_id, role, content, created_at) "
-                           "VALUES (:s, :r, :c, :now)"),
-                      {"s": session_id, "r": role, "c": content, "now": now})
+            res = c.execute(text("INSERT INTO chat_messages (session_id, role, content, created_at) "
+                                 "VALUES (:s, :r, :c, :now)"),
+                            {"s": session_id, "r": role, "c": content, "now": now})
             c.execute(text("UPDATE chat_sessions SET updated_at=:now WHERE id=:s"),
                       {"now": now, "s": session_id})
+            return int(res.lastrowid)
 
     def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
         with self.conn() as c:
@@ -1060,5 +1093,105 @@ class SqliteStore(Storage):
     def get_chat_messages(self, session_id: int) -> list[dict]:
         with self.conn() as c:
             return [dict(r) for r in c.execute(text(
-                "SELECT role, content, created_at FROM chat_messages "
+                "SELECT id, role, content, created_at FROM chat_messages "
                 "WHERE session_id=:s ORDER BY id"), {"s": session_id}).mappings().all()]
+
+    # ── Chat feedback / evals / events ─────────────────────────────────────
+    def add_message_feedback(self, message_id: int, user_email: str, team_id,
+                            rating: int, comment: str = "") -> None:
+        with self.conn() as c:
+            sid = c.execute(text("SELECT session_id FROM chat_messages WHERE id=:i"),
+                            {"i": message_id}).scalar()
+            c.execute(text(
+                "INSERT INTO chat_feedback (message_id,session_id,user_email,team_id,rating,comment,created_at) "
+                "VALUES (:m,:s,:u,:t,:r,:c,:now) "
+                "ON CONFLICT(message_id) DO UPDATE SET rating=:r, comment=:c, created_at=:now"),
+                {"m": message_id, "s": sid, "u": user_email, "t": team_id,
+                 "r": rating, "c": comment, "now": utcnow()})
+
+    def feedback_for_messages(self, message_ids: list[int]) -> dict:
+        if not message_ids:
+            return {}
+        qs = ",".join(str(int(i)) for i in message_ids)
+        with self.conn() as c:
+            return {r[0]: r[1] for r in c.execute(text(
+                f"SELECT message_id, rating FROM chat_feedback WHERE message_id IN ({qs})")).all()}
+
+    def add_message_judge(self, message_id: int, score: int, verdict: str,
+                         relevance: int, groundedness: int, completeness: int,
+                         reason: str, model: str) -> None:
+        with self.conn() as c:
+            c.execute(text(
+                "INSERT INTO chat_judge (message_id,score,verdict,relevance,groundedness,"
+                "completeness,reason,model,created_at) VALUES "
+                "(:m,:s,:v,:rel,:g,:comp,:reason,:model,:now) "
+                "ON CONFLICT(message_id) DO UPDATE SET score=:s, verdict=:v, relevance=:rel, "
+                "groundedness=:g, completeness=:comp, reason=:reason, model=:model, created_at=:now"),
+                {"m": message_id, "s": score, "v": verdict, "rel": relevance, "g": groundedness,
+                 "comp": completeness, "reason": reason, "model": model, "now": utcnow()})
+
+    def list_chat_turns(self, team_id=None, limit: int = 300,
+                       needs_judge: bool = False) -> list[dict]:
+        """Assistant replies joined with their question, feedback and judge score.
+        Scoped to ``team_id``; ``needs_judge`` keeps only un-judged turns."""
+        where = ["m.role='assistant'"]
+        params = {"lim": limit}
+        if team_id is not None:
+            where.append("s.team_id=:t"); params["t"] = team_id
+        if needs_judge:
+            where.append("j.message_id IS NULL")
+        clause = " AND ".join(where)
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT m.id AS message_id, m.session_id, s.user_email, s.team_id, "
+                "m.content AS answer, m.created_at, "
+                "(SELECT q.content FROM chat_messages q WHERE q.session_id=m.session_id "
+                " AND q.id<m.id AND q.role='user' ORDER BY q.id DESC LIMIT 1) AS question, "
+                "f.rating AS rating, f.comment AS comment, "
+                "j.score AS judge_score, j.verdict AS judge_verdict, j.reason AS judge_reason "
+                "FROM chat_messages m JOIN chat_sessions s ON s.id=m.session_id "
+                "LEFT JOIN chat_feedback f ON f.message_id=m.id "
+                "LEFT JOIN chat_judge j ON j.message_id=m.id "
+                f"WHERE {clause} ORDER BY m.id DESC LIMIT :lim"), params).mappings().all()]
+
+    def chat_analytics(self, team_id=None) -> dict:
+        tw = "JOIN chat_sessions s ON s.id=m.session_id WHERE m.role='assistant'"
+        params = {}
+        if team_id is not None:
+            tw += " AND s.team_id=:t"; params = {"t": team_id}
+        with self.conn() as c:
+            turns = c.execute(text(f"SELECT COUNT(*) FROM chat_messages m {tw}"), params).scalar() or 0
+            sessions = c.execute(text(
+                "SELECT COUNT(*) FROM chat_sessions" +
+                (" WHERE team_id=:t" if team_id is not None else "")), params).scalar() or 0
+            users = c.execute(text(
+                "SELECT COUNT(DISTINCT user_email) FROM chat_sessions" +
+                (" WHERE team_id=:t" if team_id is not None else "")), params).scalar() or 0
+            fb = "JOIN chat_sessions s ON s.id=f.session_id WHERE 1=1"
+            if team_id is not None:
+                fb += " AND s.team_id=:t"
+            ups = c.execute(text(f"SELECT COUNT(*) FROM chat_feedback f {fb} AND f.rating=1"), params).scalar() or 0
+            downs = c.execute(text(f"SELECT COUNT(*) FROM chat_feedback f {fb} AND f.rating=-1"), params).scalar() or 0
+            jw = "JOIN chat_messages m ON m.id=j.message_id JOIN chat_sessions s ON s.id=m.session_id WHERE 1=1"
+            if team_id is not None:
+                jw += " AND s.team_id=:t"
+            jrow = c.execute(text(f"SELECT COUNT(*) n, AVG(score) a FROM chat_judge j {jw}"), params).mappings().first()
+        return {"turns": turns, "sessions": sessions, "users": users,
+                "thumbs_up": ups, "thumbs_down": downs,
+                "judged": (jrow["n"] or 0),
+                "avg_judge": round(jrow["a"], 2) if jrow["a"] is not None else None}
+
+    def log_event(self, type: str, user_email: str = "", team_id=None, data: str = "") -> None:
+        with self.conn() as c:
+            c.execute(text("INSERT INTO events (created_at,type,user_email,team_id,data) "
+                           "VALUES (:now,:ty,:u,:t,:d)"),
+                      {"now": utcnow(), "ty": type, "u": user_email, "t": team_id, "d": data})
+
+    def list_events(self, limit: int = 100, team_id=None) -> list[dict]:
+        clause = "WHERE team_id=:t " if team_id is not None else ""
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                f"SELECT created_at, type, user_email, data FROM events {clause}"
+                "ORDER BY id DESC LIMIT :lim"),
+                ({"t": team_id, "lim": limit} if team_id is not None else {"lim": limit})
+                ).mappings().all()]

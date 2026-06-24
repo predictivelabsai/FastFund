@@ -926,13 +926,19 @@ class Neo4jStore(Storage):
                uid=uid, e=user_email, tid=team_id, t=title or "New chat", now=now)
         return uid
 
-    def add_chat_message(self, session_id: int, role: str, content: str) -> None:
-        now = utcnow()
+    def add_chat_message(self, session_id: int, role: str, content: str) -> int:
         with self._session() as s:
-            s.run("MATCH (cs:ChatSession {uid:$sid}) "
-                  "CREATE (cs)-[:HAS_MESSAGE]->(m:ChatMessage {role:$r, content:$c, created_at:$now}) "
-                  "SET cs.updated_at=$now",
-                  sid=session_id, r=role, c=content, now=now).consume()
+            return s.write_transaction(self._add_chat_message, session_id, role, content)
+
+    @classmethod
+    def _add_chat_message(cls, tx, session_id, role, content) -> int:
+        uid = cls._next_id(tx, "ChatMessage")
+        now = utcnow()
+        tx.run("MATCH (cs:ChatSession {uid:$sid}) "
+               "CREATE (cs)-[:HAS_MESSAGE]->(m:ChatMessage {uid:$uid, role:$r, "
+               "content:$c, created_at:$now}) SET cs.updated_at=$now",
+               sid=session_id, uid=uid, r=role, c=content, now=now)
+        return uid
 
     def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
         with self._session() as s:
@@ -946,9 +952,101 @@ class Neo4jStore(Storage):
         with self._session() as s:
             return s.run(
                 "MATCH (cs:ChatSession {uid:$sid})-[:HAS_MESSAGE]->(m:ChatMessage) "
-                "RETURN m.role AS role, m.content AS content, m.created_at AS created_at "
-                "ORDER BY m.created_at",
+                "RETURN m.uid AS id, m.role AS role, m.content AS content, "
+                "m.created_at AS created_at ORDER BY m.created_at",
                 sid=session_id).data()
+
+    # ── Chat feedback / evals / events ─────────────────────────────────────
+    def add_message_feedback(self, message_id: int, user_email: str, team_id,
+                            rating: int, comment: str = "") -> None:
+        with self._session() as s:
+            s.run("MATCH (m:ChatMessage {uid:$i}) SET m.rating=$r, m.feedback_comment=$c, "
+                  "m.feedback_user=$u, m.feedback_team=$t, m.feedback_at=$now",
+                  i=message_id, r=rating, c=comment, u=user_email, t=team_id, now=utcnow())
+
+    def feedback_for_messages(self, message_ids: list[int]) -> dict:
+        if not message_ids:
+            return {}
+        with self._session() as s:
+            return {r["id"]: r["rating"] for r in s.run(
+                "MATCH (m:ChatMessage) WHERE m.uid IN $ids AND m.rating IS NOT NULL "
+                "RETURN m.uid AS id, m.rating AS rating", ids=list(message_ids))}
+
+    def add_message_judge(self, message_id: int, score: int, verdict: str,
+                         relevance: int, groundedness: int, completeness: int,
+                         reason: str, model: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (m:ChatMessage {uid:$i}) SET m.judge_score=$s, m.judge_verdict=$v, "
+                  "m.judge_relevance=$rel, m.judge_groundedness=$g, m.judge_completeness=$comp, "
+                  "m.judge_reason=$reason, m.judge_model=$model, m.judge_at=$now",
+                  i=message_id, s=score, v=verdict, rel=relevance, g=groundedness,
+                  comp=completeness, reason=reason, model=model, now=utcnow())
+
+    def list_chat_turns(self, team_id=None, limit: int = 300,
+                       needs_judge: bool = False) -> list[dict]:
+        where = ["m.role='assistant'"]
+        if team_id is not None:
+            where.append("cs.team_id=$tid")
+        if needs_judge:
+            where.append("m.judge_score IS NULL")
+        clause = "WHERE " + " AND ".join(where)
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                "MATCH (cs:ChatSession)-[:HAS_MESSAGE]->(m:ChatMessage) "
+                f"{clause} "
+                "OPTIONAL MATCH (cs)-[:HAS_MESSAGE]->(q:ChatMessage) "
+                "WHERE q.role='user' AND q.created_at <= m.created_at AND q.uid < m.uid "
+                "WITH cs, m, q ORDER BY q.uid DESC "
+                "WITH cs, m, head(collect(q)) AS q "
+                "RETURN m.uid AS message_id, cs.uid AS session_id, cs.user_email AS user_email, "
+                "cs.team_id AS team_id, m.content AS answer, q.content AS question, "
+                "m.created_at AS created_at, m.rating AS rating, m.feedback_comment AS comment, "
+                "m.judge_score AS judge_score, m.judge_verdict AS judge_verdict, "
+                "m.judge_reason AS judge_reason "
+                "ORDER BY m.uid DESC LIMIT $lim", tid=team_id, lim=limit)]
+
+    def chat_analytics(self, team_id=None) -> dict:
+        tclause = "WHERE cs.team_id=$tid" if team_id is not None else ""
+        with self._session() as s:
+            row = s.run(
+                f"MATCH (cs:ChatSession) {tclause} "
+                "OPTIONAL MATCH (cs)-[:HAS_MESSAGE]->(m:ChatMessage {role:'assistant'}) "
+                "RETURN count(DISTINCT cs) AS sessions, "
+                "count(DISTINCT cs.user_email) AS users, count(m) AS turns",
+                tid=team_id).single()
+            fb = s.run(
+                f"MATCH (cs:ChatSession) {tclause} "
+                "MATCH (cs)-[:HAS_MESSAGE]->(m:ChatMessage) WHERE m.rating IS NOT NULL "
+                "RETURN sum(CASE WHEN m.rating=1 THEN 1 ELSE 0 END) AS ups, "
+                "sum(CASE WHEN m.rating=-1 THEN 1 ELSE 0 END) AS downs",
+                tid=team_id).single()
+            jd = s.run(
+                f"MATCH (cs:ChatSession) {tclause} "
+                "MATCH (cs)-[:HAS_MESSAGE]->(m:ChatMessage) WHERE m.judge_score IS NOT NULL "
+                "RETURN count(m) AS n, avg(m.judge_score) AS a", tid=team_id).single()
+        return {"turns": row["turns"] or 0, "sessions": row["sessions"] or 0,
+                "users": row["users"] or 0, "thumbs_up": fb["ups"] or 0,
+                "thumbs_down": fb["downs"] or 0, "judged": jd["n"] or 0,
+                "avg_judge": round(jd["a"], 2) if jd["a"] is not None else None}
+
+    def log_event(self, type: str, user_email: str = "", team_id=None, data: str = "") -> None:
+        with self._session() as s:
+            s.write_transaction(self._log_event, type, user_email, team_id, data)
+
+    @classmethod
+    def _log_event(cls, tx, type, user_email, team_id, data):
+        uid = cls._next_id(tx, "Event")
+        tx.run("CREATE (e:Event {uid:$uid, created_at:$now, type:$ty, user_email:$u, "
+               "team_id:$t, data:$d})",
+               uid=uid, now=utcnow(), ty=type, u=user_email, t=team_id, d=data)
+
+    def list_events(self, limit: int = 100, team_id=None) -> list[dict]:
+        clause = "WHERE e.team_id=$tid " if team_id is not None else ""
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                f"MATCH (e:Event) {clause}RETURN e.created_at AS created_at, e.type AS type, "
+                "e.user_email AS user_email, e.data AS data ORDER BY e.uid DESC LIMIT $lim",
+                tid=team_id, lim=limit)]
 
 
 # Neo4j drops properties set to null (it has no null storage), so a node read

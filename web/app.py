@@ -21,6 +21,7 @@ from web import monitor
 from web import aeoi
 from web import w8form
 from web import email as mailer
+from web import chat_eval
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -224,6 +225,10 @@ display:flex;align-items:center;justify-content:space-between}
 .teamsel{width:100%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer}
 .teamsel option{color:#1a1a1a}
 .rolepill{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600}
+.fb{margin-top:8px;display:flex;gap:4px}
+.fbb{background:none;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-size:13px;padding:2px 8px;line-height:1.3;transition:opacity .15s}
+.fbb:hover{border-color:var(--accent)}
+.fbb.chosen{border-color:var(--accent);background:#faf3f8}
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
@@ -717,6 +722,79 @@ def invite_accept_post(sess, token: str, name: str = "", password: str = ""):
     return RedirectResponse("/", status_code=303)
 
 
+# ── Admin: chat analytics + evals ────────────────────────────────────────────
+def _metric_card(label, value, color="var(--navy)"):
+    return Div(Div(str(value), style=f"font-size:26px;font-weight:700;color:{color}"),
+               Div(label, style="color:var(--muted);font-size:12px"),
+               style="flex:1;min-width:120px;background:#fff;border:1px solid var(--line);"
+                     "border-radius:10px;padding:12px 14px")
+
+
+@rt("/admin/analytics", methods=["GET"])
+def admin_analytics(sess, scope: str = "team", judged: str = ""):
+    if (r := admin_only(sess)):
+        return r
+    # Admins can view their team's chats or the whole platform.
+    tid = None if scope == "all" else active_team_id(sess)
+    summ = store.chat_analytics(team_id=tid)
+    turns = store.list_chat_turns(team_id=tid, limit=200)
+    vcol = {"good": "#1c7c44", "fair": "#b06b00", "poor": "#c0392b"}
+
+    def trow(t):
+        rating = t.get("rating")
+        thumb = "👍" if rating == 1 else "👎" if rating == -1 else "—"
+        jv = t.get("judge_verdict")
+        judge = (Span(f"{t.get('judge_score')}/5 {jv}", style=f"color:{vcol.get(jv, '#7a7a85')};font-weight:600")
+                 if t.get("judge_score") is not None else Span("—", cls="muted"))
+        return Tr(Td((t.get("question") or "—")[:70]),
+                  Td((t.get("answer") or "")[:90], style="color:var(--muted);font-size:12px"),
+                  Td(thumb, style="text-align:center"),
+                  Td(judge),
+                  Td((t.get("judge_reason") or "")[:80], style="color:var(--muted);font-size:11px"),
+                  Td((t.get("user_email") or "—"), style="font-size:11px"))
+    avg = summ.get("avg_judge")
+    cards = Div(
+        _metric_card("Turns", summ["turns"]),
+        _metric_card("Sessions", summ["sessions"]),
+        _metric_card("Users", summ["users"]),
+        _metric_card("👍", summ["thumbs_up"], "#1c7c44"),
+        _metric_card("👎", summ["thumbs_down"], "#c0392b"),
+        _metric_card("Judge avg", f"{avg}/5" if avg is not None else "—"),
+        _metric_card("Judged", summ["judged"]),
+        style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 0")
+    toggle = Div(
+        A("My team", href="/admin/analytics?scope=team",
+          cls="btn" if scope != "all" else "", style="margin-right:6px"),
+        A("All teams", href="/admin/analytics?scope=all",
+          cls="btn" if scope == "all" else ""),
+        Form(Button("⚖ Run LLM judge on new turns", cls="btn",
+                    style="background:#6b1766;margin-left:10px"),
+             method="post", action=f"/admin/judge-run?scope={scope}", style="display:inline"),
+        style="margin:8px 0")
+    return Page(sess,
+        H1("Chat analytics & evals"),
+        P("Every assistant reply is logged. Users rate replies 👍/👎, and an "
+          "LLM-as-judge (Grok) scores quality (relevance, groundedness, completeness). "
+          "Offline ground-truth evals live separately in the repo's evals/.", cls="muted"),
+        (P(f"✓ Judged {judged} new turn(s).", style="color:#1c7c44") if judged else ""),
+        cards, toggle,
+        H2("Recent turns"),
+        (Table(Tr(Th("Question"), Th("Answer"), Th("Vote"), Th("Judge"), Th("Why"), Th("User")),
+               *[trow(t) for t in turns]) if turns
+         else P("No chat turns logged yet.", cls="muted")),
+        title="Chat analytics · TaxHub")
+
+
+@rt("/admin/judge-run", methods=["POST"])
+def admin_judge_run(sess, scope: str = "team"):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    tid = None if scope == "all" else active_team_id(sess)
+    res = chat_eval.run_judge(store, team_id=tid, limit=25)
+    return RedirectResponse(f"/admin/analytics?scope={scope}&judged={res['judged']}",
+                            status_code=303)
+
+
 # ── Google OAuth: redirect to Google, then handle the callback ────────────────
 if OAUTH_ENABLED:
     def _redirect_uri(request):
@@ -864,7 +942,8 @@ def team_switcher(sess):
 def left_pane(sess):
     sessions = store.list_chat_sessions(user_email(sess), limit=15) if user_email(sess) else []
     admin_links = ([A("👤 Users", href="/admin/users", cls="navlink"),
-                    A("🏢 Teams", href="/admin/teams", cls="navlink")]
+                    A("🏢 Teams", href="/admin/teams", cls="navlink"),
+                    A("📊 Chat analytics", href="/admin/analytics", cls="navlink")]
                    if is_admin(sess) else [])
     return Div(
         Div("JTC ", Span("TaxHub"), cls="brand"),
@@ -902,14 +981,24 @@ def left_pane(sess):
         cls="pane left")
 
 
-def bubble(role, content):
+def bubble(role, content, mid=None, rating=None):
     if role == "assistant":
-        return Div(content, cls="bubble assistant", **{"data-md": "1"})
+        fb = ""
+        if mid:
+            attrs = {"data-mid": str(mid)}
+            if rating in (1, -1):
+                attrs["data-rated"] = str(rating)
+            fb = Div(Button("👍", cls="fbb", onclick=f"sendFb({mid},1,this.parentNode,this)"),
+                     Button("👎", cls="fbb", onclick=f"sendFb({mid},-1,this.parentNode,this)"),
+                     cls="fb", **attrs)
+        return Div(content, fb, cls="bubble assistant", **{"data-md": "1"})
     return Div(content, cls="bubble user")
 
 
-def center_pane(messages):
-    msg_divs = [bubble(m["role"], m["content"]) for m in messages] or [
+def center_pane(messages, ratings=None):
+    ratings = ratings or {}
+    msg_divs = [bubble(m["role"], m["content"], m.get("id"), ratings.get(m.get("id")))
+                for m in messages] or [
         Div(Div("TaxHub Assistant", style="font-weight:600;margin-bottom:4px"),
             "Ask me which tax form to file, or a tax-law question. I'll route to the "
             "right specialist agent and cite my sources.", cls="bubble assistant")]
@@ -954,6 +1043,23 @@ function linkMarkers(h){
   h=h.replace(/\\[w8:(\\d+)\\]/g,'<a href="#" onclick="openW8($1);return false">📝 open W-8 editor</a>');
   return h;}
 document.querySelectorAll('[data-md]').forEach(renderMd);
+function thumbs(bubble,mid){if(!bubble||!mid||bubble.querySelector('.fb'))return;
+  var w=document.createElement('div');w.className='fb';w.dataset.mid=mid;
+  var up=document.createElement('button');up.className='fbb';up.textContent='👍';up.title='Good response';
+  up.onclick=function(){sendFb(mid,1,w,up);};
+  var dn=document.createElement('button');dn.className='fbb';dn.textContent='👎';dn.title='Needs work';
+  dn.onclick=function(){sendFb(mid,-1,w,dn);};
+  w.appendChild(up);w.appendChild(dn);bubble.appendChild(w);}
+function sendFb(mid,rating,w,btn){
+  var p=new URLSearchParams();p.append('message_id',mid);p.append('rating',String(rating));
+  fetch('/chat-feedback',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()}).catch(function(){});
+  Array.prototype.forEach.call(w.querySelectorAll('.fbb'),function(b){b.disabled=true;b.style.opacity='.3';});
+  btn.style.opacity='1';btn.classList.add('chosen');}
+function markFb(){document.querySelectorAll('.fb[data-rated]').forEach(function(w){
+  var r=w.getAttribute('data-rated');
+  w.querySelectorAll('.fbb').forEach(function(b){b.disabled=true;b.style.opacity='.3';});
+  var sel=w.querySelector(r==='1'?'.fbb':'.fbb+.fbb');if(sel){sel.style.opacity='1';sel.classList.add('chosen');}});}
+document.addEventListener('DOMContentLoaded',markFb);
 function addBubble(role,html){var m=document.getElementById('msgs');
   var d=document.createElement('div');d.className='bubble '+role;d.innerHTML=html;
   m.appendChild(d);m.scrollTop=m.scrollHeight;return d;}
@@ -975,6 +1081,7 @@ async function sendMessage(e){if(e)e.preventDefault();if(streaming)return false;
       else if(type==='tool_start'){var c=document.createElement('span');c.className='toolchip';
         c.textContent='⚙ '+data.name;b.appendChild(c);}
       else if(type==='session'&&data.sid){history.replaceState(0,'','/?sid='+data.sid);}
+      else if(type==='done'){if(data.mid)thumbs(b,data.mid);}
     }
     document.getElementById('msgs').scrollTop=1e9;}
   streaming=false;return false;}
@@ -1028,8 +1135,10 @@ def home(sess, sid: int = 0):
     if (r := require(sess)):
         return r
     messages = store.get_chat_messages(sid) if sid else []
+    ratings = store.feedback_for_messages([m["id"] for m in messages if m.get("id")]) \
+        if messages else {}
     return (Title("TaxHub Assistant"), CSS,
-            Div(left_pane(sess), center_pane(messages), right_pane(), cls="app"), JS)
+            Div(left_pane(sess), center_pane(messages, ratings), right_pane(), cls="app"), JS)
 
 
 # ── Chat SSE ────────────────────────────────────────────────────────────────
@@ -1053,8 +1162,9 @@ async def chat(sess, msg: str = "", sid: int = 0):
     if (require(sess)):
         return JSONResponse({"error": "auth"}, status_code=401)
     email = user_email(sess)
+    tid = active_team_id(sess)
     if not sid:
-        sid = store.create_chat_session(email, title=msg[:48])
+        sid = store.create_chat_session(email, title=msg[:48], team_id=tid)
     store.add_chat_message(sid, "user", msg)
     from agents import sse as S
 
@@ -1063,10 +1173,10 @@ async def chat(sess, msg: str = "", sid: int = 0):
         sc = _shortcut(msg)
         if sc is not None:
             yield S.event(S.TOKEN, {"text": sc})
-            store.add_chat_message(sid, "assistant", sc)
-            yield S.event(S.DONE, {"tools": 1})
+            mid = store.add_chat_message(sid, "assistant", sc)
+            yield S.event(S.DONE, {"tools": 1, "mid": mid})
             return
-        acc = []
+        acc, tools = [], 0
         async for ev in orchestrator.astream(msg):
             # tee token text so we can persist the full answer
             if '"token"' in ev:
@@ -1075,10 +1185,40 @@ async def chat(sess, msg: str = "", sid: int = 0):
                     acc.append(_j.loads(ev.split("data: ", 1)[1])["text"])
                 except Exception:  # noqa: BLE001
                     pass
-            yield ev
-        store.add_chat_message(sid, "assistant", "".join(acc) or "(no response)")
+            elif '"tool_start"' in ev:
+                tools += 1
+            # The orchestrator already emits its own DONE; intercept it so we can
+            # persist the answer first and append the message id for feedback.
+            if "event: done" in ev:
+                answer = "".join(acc) or "(no response)"
+                mid = store.add_chat_message(sid, "assistant", answer)
+                try:
+                    store.log_event("chat_turn", email, tid,
+                                    (msg or "")[:120])
+                except Exception:  # noqa: BLE001
+                    pass
+                yield S.event(S.DONE, {"tools": tools, "mid": mid})
+            else:
+                yield ev
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@rt("/chat-feedback", methods=["POST"])
+def chat_feedback(sess, message_id: int = 0, rating: int = 0, comment: str = ""):
+    """Record 👍 (rating=1) / 👎 (rating=-1) on an assistant reply."""
+    if (require(sess)):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    if not message_id or rating not in (1, -1):
+        return JSONResponse({"status": "error"}, status_code=400)
+    store.add_message_feedback(message_id, user_email(sess), active_team_id(sess),
+                               rating, comment)
+    try:
+        store.log_event("chat_feedback", user_email(sess), active_team_id(sess),
+                        f"{'up' if rating == 1 else 'down'} on msg {message_id}")
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse({"status": "ok"})
 
 
 @rt("/form/{form_id}")
@@ -1262,6 +1402,7 @@ async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
       else if(type==='tool_start'){var c=document.createElement('span');c.className='toolchip';
         c.textContent='⚙ '+data.name;b.appendChild(c);}
       else if(type==='session'&&data.sid){cpSid=data.sid;}
+      else if(type==='done'){if(data.mid)thumbs(b,data.mid);}
     }
     document.getElementById('cpMsgs').scrollTop=1e9;}
   cpStreaming=false;return false;}
