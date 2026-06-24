@@ -20,6 +20,7 @@ import taxstore as store
 from web import monitor
 from web import aeoi
 from web import w8form
+from web import email as mailer
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -413,7 +414,7 @@ def switch_team(sess, team_id: int = 0):
 
 
 # ── My profile ───────────────────────────────────────────────────────────────
-@rt("/profile")
+@rt("/profile", methods=["GET"])
 def profile(sess, saved: str = ""):
     if (r := require(sess)):
         return r
@@ -488,6 +489,7 @@ def admin_users(sess):
         H1("Users"),
         P(f"{len(users)} users. Set a user's global role (admin can manage users & "
           "teams) or add them to a team.", cls="muted"),
+        P(A("✉ Invite a new user", href="/admin/invite", cls="btn")),
         Table(Tr(Th("Email"), Th("Name"), Th("Global role"), Th("Teams"), Th("Add to team")),
               *[urow(u) for u in users]),
         title="Users · TaxHub")
@@ -585,6 +587,134 @@ def admin_team_remove_member(sess, team_id: int = 0, user_id: int = 0):
     if team_id and user_id:
         store.remove_team_member(team_id, user_id)
     return RedirectResponse(f"/admin/teams/{team_id}", status_code=303)
+
+
+# ── Admin: invites (Postmark) ────────────────────────────────────────────────
+def _base_url(request):
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    return f"{scheme}://{host}"
+
+
+@rt("/admin/invite", methods=["GET"])
+def admin_invite(sess, sent: str = "", err: str = ""):
+    if (r := admin_only(sess)):
+        return r
+    teams = store.list_teams()
+    cur = active_team_id(sess)
+    recent = store.list_invites()[:15]
+    def irow(i):
+        status = ("✓ accepted" if i.get("used_at") else "pending")
+        return Tr(Td(i.get("email")), Td(_role_pill(i.get("role"))),
+                  Td(next((t["name"] for t in teams if t["id"] == i.get("team_id")), "—")),
+                  Td(status), Td((i.get("created_at") or "")[:10]))
+    return Page(sess,
+        H1("Invite a user"),
+        (P("✓ Invitation sent.", style="color:#1c7c44") if sent else ""),
+        (P(f"⚠ {err}", style="color:#c0392b") if err else ""),
+        P("Send a branded email invite. The recipient sets a password (or signs in "
+          "with Google) and joins the chosen team.", cls="muted"),
+        Form(
+            Div(Input(name="email", type="email", placeholder="person@firm.com",
+                      required=True, style="padding:8px;border:1px solid var(--line);border-radius:7px;width:46%"),
+                Select(*[Option(t["name"], value=str(t["id"]), selected=(t["id"] == cur))
+                         for t in teams], name="team_id",
+                       style="padding:8px;border:1px solid var(--line);border-radius:7px;margin:0 6px"),
+                Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+                       name="role", style="padding:8px;border:1px solid var(--line);border-radius:7px"),
+                style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"),
+            Button("✉ Send invitation", cls="btn", style="margin-top:10px"),
+            method="post", action="/admin/invite"),
+        H2("Recent invitations"),
+        (Table(Tr(Th("Email"), Th("Role"), Th("Team"), Th("Status"), Th("Sent")),
+               *[irow(i) for i in recent]) if recent else P("None yet.", cls="muted")),
+        title="Invite · TaxHub")
+
+
+@rt("/admin/invite", methods=["POST"])
+def admin_invite_send(sess, request, email: str = "", team_id: int = 0, role: str = "member"):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    import secrets
+    from datetime import datetime, timedelta, timezone
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return RedirectResponse("/admin/invite?err=Enter+a+valid+email", status_code=303)
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(timespec="seconds")
+    store.create_invite(email, team_id or None, role if role in ("admin", "member") else "member",
+                        token, current_user(sess), expires)
+    team = store.get_team(team_id) if team_id else None
+    team_name = team["name"] if team else "TaxHub"
+    invite_url = f"{_base_url(request)}/invite/{token}"
+    res = mailer.send_email(
+        to=email, tag="invite",
+        subject=f"You're invited to {team_name} on TaxHub",
+        html_body=mailer.invite_email_html(invite_url=invite_url, team_name=team_name,
+                                           inviter=user_email(sess), role=role),
+        text_body=mailer.invite_email_text(invite_url=invite_url, team_name=team_name,
+                                           inviter=user_email(sess), role=role))
+    if res.get("error") or (res.get("ErrorCode", 0) not in (0, None) and not res.get("skipped")):
+        return RedirectResponse("/admin/invite?err=Email+failed+(check+Postmark+sender)",
+                                status_code=303)
+    return RedirectResponse("/admin/invite?sent=1", status_code=303)
+
+
+@rt("/invite/{token}", methods=["GET"])
+def invite_accept(sess, token: str, err: str = ""):
+    inv = store.get_invite_by_token(token)
+    msg = None
+    if not inv:
+        msg = "This invitation link is not valid."
+    elif inv.get("used_at"):
+        msg = "This invitation has already been used. Please sign in."
+    else:
+        from datetime import datetime, timezone
+        try:
+            if datetime.fromisoformat(inv["expires_at"]) < datetime.now(timezone.utc):
+                msg = "This invitation has expired. Ask your admin to resend it."
+        except Exception:  # noqa: BLE001
+            pass
+    if msg:
+        return (Title("Invitation · TaxHub"), CSS,
+                Div(H2("TaxHub"), P(msg, style="color:#c0392b"),
+                    P(A("Go to sign in →", href="/login")), cls="form"))
+    team = store.get_team(inv["team_id"]) if inv.get("team_id") else None
+    team_name = team["name"] if team else "TaxHub"
+    return (Title("Accept invitation · TaxHub"), CSS, Form(
+        H2("TaxHub"),
+        P(f"Join {team_name}", style="color:#6b7686"),
+        (P(err, style="color:#c0392b") if err else ""),
+        P(f"Invited as {inv['email']} ({inv.get('role')})",
+          style="font-size:13px;color:#6b7686"),
+        Input(name="name", placeholder="Your name", value=inv["email"].split("@")[0]),
+        Input(name="password", placeholder="Choose a password", type="password", required=True),
+        Button("Accept & sign in", cls="btn", style="width:100%"),
+        (_google_button() if OAUTH_ENABLED else ""),
+        method="post", action=f"/invite/{token}", cls="form"))
+
+
+@rt("/invite/{token}", methods=["POST"])
+def invite_accept_post(sess, token: str, name: str = "", password: str = ""):
+    inv = store.get_invite_by_token(token)
+    if not inv or inv.get("used_at"):
+        return RedirectResponse("/login?error=Invitation+not+valid", status_code=303)
+    if len(password) < 6:
+        return RedirectResponse(f"/invite/{token}?err=Password+must+be+6%2B+characters",
+                                status_code=303)
+    import bcrypt
+    email = inv["email"].strip().lower()
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    user = store.get_or_create_oauth_user(email, name.strip() or email.split("@")[0])
+    store.set_user_password(user["id"], pw_hash)
+    if name.strip():
+        store.update_user_name(user["id"], name.strip())
+    if inv.get("team_id"):
+        store.add_team_member(inv["team_id"], user["id"],
+                              inv.get("role") if inv.get("role") in ("admin", "member") else "member")
+    store.mark_invite_used(token)
+    establish_session(sess, user["id"], email)
+    return RedirectResponse("/", status_code=303)
 
 
 # ── Google OAuth: redirect to Google, then handle the callback ────────────────
