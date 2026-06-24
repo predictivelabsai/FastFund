@@ -50,14 +50,14 @@ def catalogue_matrix(store) -> dict:
                        "downloadable": n_dl, "online": n_on, "reference": n_ref}}
 
 
-def portfolio_matrix(store, statuses: list[str]) -> dict:
+def portfolio_matrix(store, statuses: list[str], team_id=None) -> dict:
     """Entity × status grid over every obligation, plus headline coverage.
 
     ``statuses`` fixes the column order (the app's canonical OB_STATUS). Returns
     ``{rows:[{id,name,counts{status:n},total,filed,pct}], statuses, total, filed,
-    pct, by_status}``."""
-    ents = store.list_entities(limit=5000)
-    obs = store.list_obligations(limit=20000)
+    pct, by_status}``. Scoped to ``team_id`` when given."""
+    ents = store.list_entities(limit=5000, team_id=team_id)
+    obs = store.list_obligations(limit=20000, team_id=team_id)
     by_ent: dict = {}
     for o in obs:
         by_ent.setdefault(o.get("entity_id"), []).append(o)

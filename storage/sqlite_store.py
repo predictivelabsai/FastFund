@@ -165,6 +165,7 @@ class SqliteStore(Storage):
             activities    TEXT,
             client_ref    TEXT,
             status        TEXT,
+            team_id       INTEGER,
             created_at    TEXT,
             updated_at    TEXT,
             UNIQUE(client_ref)
@@ -188,6 +189,7 @@ class SqliteStore(Storage):
         """CREATE TABLE IF NOT EXISTS chat_sessions (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
+            team_id    INTEGER,
             title      TEXT,
             created_at TEXT,
             updated_at TEXT
@@ -198,6 +200,35 @@ class SqliteStore(Storage):
             role       TEXT,
             content    TEXT,
             created_at TEXT
+        )""",
+        # ── Teams / RBAC ────────────────────────────────────────────────────
+        # A Team is a workspace; client data (entities/obligations/chats) is
+        # scoped to it. Users join a team via team_members with a per-team role.
+        """CREATE TABLE IF NOT EXISTS teams (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL,
+            created_at TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS team_members (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id    INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            role       TEXT DEFAULT 'member',
+            created_at TEXT,
+            UNIQUE(team_id, user_id)
+        )""",
+        # Invites: an admin invites an email to a team with a role; the token
+        # link lets the invitee set a password (Google sign-in also works).
+        """CREATE TABLE IF NOT EXISTS invites (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email      TEXT NOT NULL,
+            team_id    INTEGER,
+            role       TEXT DEFAULT 'member',
+            token      TEXT UNIQUE NOT NULL,
+            inviter_id INTEGER,
+            created_at TEXT,
+            expires_at TEXT,
+            used_at    TEXT
         )""",
     ]
 
@@ -221,7 +252,15 @@ class SqliteStore(Storage):
                 c.execute(text(stmt))
             for stmt in self.INDEXES:
                 c.execute(text(stmt))
+            # Idempotent column migrations for pre-existing DBs.
+            for tbl, col, decl in (("entities", "team_id", "INTEGER"),
+                                   ("chat_sessions", "team_id", "INTEGER")):
+                try:
+                    c.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}"))
+                except Exception:  # noqa: BLE001 — column already exists
+                    pass
         self._seed_admin()
+        self._seed_platform()
 
     def _seed_admin(self) -> None:
         import bcrypt
@@ -241,6 +280,161 @@ class SqliteStore(Storage):
                     ),
                     {"e": email, "p": pw_hash, "n": "JTC Admin"},
                 )
+
+    # Platform admins seeded as global admins (comma-separated env override).
+    PLATFORM_ADMINS = ("julian@predictivelabs.co.uk", "kaljuvee@gmail.com")
+    DEFAULT_TEAM = "JTC Group"
+
+    def _seed_platform(self) -> None:
+        """Ensure a default team exists, the platform admins are global admins +
+        members, and any team-less entities/users are attached. Idempotent."""
+        import bcrypt
+        extra = [e.strip().lower() for e in
+                 os.environ.get("PLATFORM_ADMINS", "").split(",") if e.strip()]
+        admins = list(dict.fromkeys(list(self.PLATFORM_ADMINS) + extra))
+        now = utcnow()
+        with self.conn() as c:
+            row = c.execute(text("SELECT id FROM teams WHERE name=:n"),
+                            {"n": self.DEFAULT_TEAM}).first()
+            team_id = row[0] if row else int(c.execute(
+                text("INSERT INTO teams (name, created_at) VALUES (:n,:t)"),
+                {"n": self.DEFAULT_TEAM, "t": now}).lastrowid)
+            # Promote/seed platform admins.
+            for email in admins:
+                u = c.execute(text("SELECT id, role FROM users WHERE email=:e"),
+                              {"e": email}).mappings().first()
+                if not u:
+                    pw = bcrypt.hashpw(os.environ.get("ADMIN_PASSWORD", "Funds2$2").encode(),
+                                       bcrypt.gensalt()).decode()
+                    uid = int(c.execute(text(
+                        "INSERT INTO users (email, password_hash, name, role) "
+                        "VALUES (:e,:p,:n,'admin')"),
+                        {"e": email, "p": pw, "n": email.split("@")[0]}).lastrowid)
+                else:
+                    uid = u["id"]
+                    if u["role"] != "admin":
+                        c.execute(text("UPDATE users SET role='admin' WHERE id=:i"), {"i": uid})
+                c.execute(text("INSERT OR IGNORE INTO team_members "
+                               "(team_id,user_id,role,created_at) VALUES (:t,:u,'admin',:n)"),
+                          {"t": team_id, "u": uid, "n": now})
+            # Backfill: every existing user belongs to the default team.
+            for u in c.execute(text("SELECT id FROM users")).all():
+                c.execute(text("INSERT OR IGNORE INTO team_members "
+                               "(team_id,user_id,role,created_at) VALUES (:t,:u,'member',:n)"),
+                          {"t": team_id, "u": u[0], "n": now})
+            # Attach team-less entities to the default team.
+            c.execute(text("UPDATE entities SET team_id=:t WHERE team_id IS NULL"),
+                      {"t": team_id})
+
+    # ── Users (profile + RBAC) ─────────────────────────────────────────────
+    def get_user(self, user_id: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT id, email, name, role, created_at FROM users "
+                               "WHERE id=:i"), {"i": user_id}).mappings().first()
+            return dict(r) if r else None
+
+    def list_users(self) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT id, email, name, role, created_at FROM users ORDER BY email"
+            )).mappings().all()]
+
+    def set_user_role(self, user_id: int, role: str) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE users SET role=:r WHERE id=:i"),
+                      {"r": role, "i": user_id})
+
+    def set_user_password(self, user_id: int, password_hash: str) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE users SET password_hash=:p WHERE id=:i"),
+                      {"p": password_hash, "i": user_id})
+
+    def update_user_name(self, user_id: int, name: str) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE users SET name=:n WHERE id=:i"),
+                      {"n": name, "i": user_id})
+
+    # ── Teams / membership ─────────────────────────────────────────────────
+    def create_team(self, name: str) -> int:
+        with self.conn() as c:
+            return int(c.execute(text("INSERT INTO teams (name, created_at) "
+                                      "VALUES (:n,:t)"),
+                                 {"n": name, "t": utcnow()}).lastrowid)
+
+    def list_teams(self) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT t.id, t.name, t.created_at, "
+                "(SELECT COUNT(*) FROM team_members m WHERE m.team_id=t.id) AS members, "
+                "(SELECT COUNT(*) FROM entities e WHERE e.team_id=t.id) AS entities "
+                "FROM teams t ORDER BY t.name")).mappings().all()]
+
+    def get_team(self, team_id: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT id, name, created_at FROM teams WHERE id=:i"),
+                          {"i": team_id}).mappings().first()
+            return dict(r) if r else None
+
+    def add_team_member(self, team_id: int, user_id: int, role: str = "member") -> None:
+        with self.conn() as c:
+            c.execute(text("INSERT INTO team_members (team_id,user_id,role,created_at) "
+                           "VALUES (:t,:u,:r,:n) "
+                           "ON CONFLICT(team_id,user_id) DO UPDATE SET role=:r"),
+                      {"t": team_id, "u": user_id, "r": role, "n": utcnow()})
+
+    def remove_team_member(self, team_id: int, user_id: int) -> None:
+        with self.conn() as c:
+            c.execute(text("DELETE FROM team_members WHERE team_id=:t AND user_id=:u"),
+                      {"t": team_id, "u": user_id})
+
+    def list_team_members(self, team_id: int) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT u.id AS user_id, u.email, u.name, m.role "
+                "FROM team_members m JOIN users u ON u.id=m.user_id "
+                "WHERE m.team_id=:t ORDER BY u.email"), {"t": team_id}).mappings().all()]
+
+    def list_teams_for_user(self, user_id: int) -> list[dict]:
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                "SELECT t.id, t.name, m.role FROM team_members m "
+                "JOIN teams t ON t.id=m.team_id WHERE m.user_id=:u ORDER BY t.name"),
+                {"u": user_id}).mappings().all()]
+
+    def team_role(self, team_id: int, user_id: int) -> str | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT role FROM team_members WHERE team_id=:t AND user_id=:u"),
+                          {"t": team_id, "u": user_id}).first()
+            return r[0] if r else None
+
+    # ── Invites ────────────────────────────────────────────────────────────
+    def create_invite(self, email: str, team_id: int | None, role: str,
+                      token: str, inviter_id: int | None, expires_at: str) -> int:
+        with self.conn() as c:
+            return int(c.execute(text(
+                "INSERT INTO invites (email,team_id,role,token,inviter_id,created_at,expires_at) "
+                "VALUES (:e,:t,:r,:k,:i,:n,:x)"),
+                {"e": email.strip().lower(), "t": team_id, "r": role, "k": token,
+                 "i": inviter_id, "n": utcnow(), "x": expires_at}).lastrowid)
+
+    def get_invite_by_token(self, token: str) -> dict | None:
+        with self.conn() as c:
+            r = c.execute(text("SELECT * FROM invites WHERE token=:k"),
+                          {"k": token}).mappings().first()
+            return dict(r) if r else None
+
+    def mark_invite_used(self, token: str) -> None:
+        with self.conn() as c:
+            c.execute(text("UPDATE invites SET used_at=:n WHERE token=:k"),
+                      {"n": utcnow(), "k": token})
+
+    def list_invites(self, team_id: int | None = None) -> list[dict]:
+        clause = "WHERE team_id=:t" if team_id is not None else ""
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(text(
+                f"SELECT id, email, team_id, role, created_at, expires_at, used_at "
+                f"FROM invites {clause} ORDER BY created_at DESC"),
+                ({"t": team_id} if team_id is not None else {})).mappings().all()]
 
     # ── Jurisdictions / documents (write) ──────────────────────────────────
 
@@ -724,20 +918,24 @@ class SqliteStore(Storage):
             "activities": ",".join(entity.get("activities") or []),
             "client_ref": entity.get("client_ref") or entity.get("name"),
             "status": entity.get("status") or "active",
+            "team_id": entity.get("team_id"),
         }
         with self.conn() as c:
             row = c.execute(text("SELECT id FROM entities WHERE client_ref=:k"),
                             {"k": v["client_ref"]}).first()
             if row:
-                sets = ", ".join(f"{k}=:{k}" for k in v)
+                # Don't overwrite an existing team_id with NULL on a metadata refresh.
+                upd = {k: val for k, val in v.items()
+                       if not (k == "team_id" and val is None)}
+                sets = ", ".join(f"{k}=:{k}" for k in upd)
                 c.execute(text(f"UPDATE entities SET {sets}, updated_at=:now WHERE id=:id"),
-                          {**v, "now": now, "id": row[0]})
+                          {**upd, "now": now, "id": row[0]})
                 return row[0]
             res = c.execute(text(
                 "INSERT INTO entities (name,type,domicile,jurisdictions,fy_end,"
-                "activities,client_ref,status,created_at,updated_at) VALUES "
+                "activities,client_ref,status,team_id,created_at,updated_at) VALUES "
                 "(:name,:type,:domicile,:jurisdictions,:fy_end,:activities,"
-                ":client_ref,:status,:now,:now)"), {**v, "now": now})
+                ":client_ref,:status,:team_id,:now,:now)"), {**v, "now": now})
             return int(res.lastrowid)
 
     def get_entity(self, entity_id: int) -> dict | None:
@@ -746,19 +944,24 @@ class SqliteStore(Storage):
                           {"i": entity_id}).mappings().first()
             return self._entity_row(r) if r else None
 
-    def list_entities(self, limit: int = 500) -> list[dict]:
+    def list_entities(self, limit: int = 500, team_id: int | None = None) -> list[dict]:
+        clause, params = "", {"l": limit}
+        if team_id is not None:
+            clause = "WHERE team_id=:t "; params["t"] = team_id
         with self.conn() as c:
-            rows = c.execute(text("SELECT * FROM entities ORDER BY name LIMIT :l"),
-                             {"l": limit}).mappings().all()
+            rows = c.execute(text(f"SELECT * FROM entities {clause}ORDER BY name LIMIT :l"),
+                             params).mappings().all()
         return [self._entity_row(r) for r in rows]
 
     def delete_entity(self, entity_id: int) -> None:
         with self.conn() as c:
             c.execute(text("DELETE FROM entities WHERE id=:i"), {"i": entity_id})
 
-    def count_entities(self) -> int:
+    def count_entities(self, team_id: int | None = None) -> int:
+        clause = "WHERE team_id=:t" if team_id is not None else ""
         with self.conn() as c:
-            return int(c.execute(text("SELECT count(*) FROM entities")).scalar() or 0)
+            return int(c.execute(text(f"SELECT count(*) FROM entities {clause}"),
+                                 ({"t": team_id} if team_id is not None else {})).scalar() or 0)
 
     # ── Obligations ────────────────────────────────────────────────────────
     @staticmethod
@@ -795,17 +998,22 @@ class SqliteStore(Storage):
                           {"i": obligation_id}).mappings().first()
             return self._ob_row(r) if r else None
 
-    def list_obligations(self, entity_id=None, status=None, limit=1000) -> list[dict]:
+    def list_obligations(self, entity_id=None, status=None, limit=1000,
+                         team_id=None) -> list[dict]:
         where, params = [], {"l": limit}
         if entity_id is not None:
-            where.append("entity_id=:e"); params["e"] = entity_id
+            where.append("o.entity_id=:e"); params["e"] = entity_id
         if status:
-            where.append("status=:s"); params["s"] = status
+            where.append("o.status=:s"); params["s"] = status
+        join = ""
+        if team_id is not None:
+            join = "JOIN entities en ON en.id=o.entity_id "
+            where.append("en.team_id=:t"); params["t"] = team_id
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         with self.conn() as c:
             rows = c.execute(text(
-                f"SELECT * FROM obligations {clause} "
-                "ORDER BY jurisdiction_code, category LIMIT :l"), params).mappings().all()
+                f"SELECT o.* FROM obligations o {join}{clause} "
+                "ORDER BY o.jurisdiction_code, o.category LIMIT :l"), params).mappings().all()
         return [self._ob_row(r) for r in rows]
 
     def set_obligation_status(self, obligation_id: int, status: str) -> None:
@@ -823,13 +1031,14 @@ class SqliteStore(Storage):
             c.execute(text("DELETE FROM obligations WHERE id=:i"), {"i": obligation_id})
 
     # ── Chat history ───────────────────────────────────────────────────────
-    def create_chat_session(self, user_email: str, title: str = "") -> int:
+    def create_chat_session(self, user_email: str, title: str = "",
+                            team_id: int | None = None) -> int:
         now = utcnow()
         with self.conn() as c:
             res = c.execute(text(
-                "INSERT INTO chat_sessions (user_email, title, created_at, updated_at) "
-                "VALUES (:e, :t, :now, :now)"),
-                {"e": user_email, "t": title or "New chat", "now": now})
+                "INSERT INTO chat_sessions (user_email, team_id, title, created_at, updated_at) "
+                "VALUES (:e, :tid, :t, :now, :now)"),
+                {"e": user_email, "tid": team_id, "t": title or "New chat", "now": now})
             return res.lastrowid
 
     def add_chat_message(self, session_id: int, role: str, content: str) -> None:

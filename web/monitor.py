@@ -215,12 +215,13 @@ def annotate(ob: dict, entity: dict | None, today: date) -> dict:
     return out
 
 
-def portfolio_calendar(store, today: date) -> list[dict]:
+def portfolio_calendar(store, today: date, team_id=None) -> list[dict]:
     """Every obligation across the portfolio, annotated with a resolved due date
-    and entity name, sorted by due date (dated first, ascending; undated last)."""
-    ents = {e["id"]: e for e in store.list_entities(limit=5000)}
+    and entity name, sorted by due date (dated first, ascending; undated last).
+    Scoped to ``team_id`` when given."""
+    ents = {e["id"]: e for e in store.list_entities(limit=5000, team_id=team_id)}
     rows = []
-    for ob in store.list_obligations(limit=20000):
+    for ob in store.list_obligations(limit=20000, team_id=team_id):
         a = annotate(ob, ents.get(ob.get("entity_id")), today)
         e = ents.get(ob.get("entity_id"))
         a["entity_name"] = e["name"] if e else "—"
@@ -229,10 +230,10 @@ def portfolio_calendar(store, today: date) -> list[dict]:
     return rows
 
 
-def deadline_digest(store, today: date, horizon_days: int = 90) -> dict:
+def deadline_digest(store, today: date, horizon_days: int = 90, team_id=None) -> dict:
     """Summarise the calendar for alerting: overdue + upcoming (≤ horizon)
     open obligations, plus counts. The basis for an email/Slack digest."""
-    cal = portfolio_calendar(store, today)
+    cal = portfolio_calendar(store, today, team_id=team_id)
     overdue = [r for r in cal if r["urgency"] == "overdue"]
     upcoming = [r for r in cal if r["urgency"] in ("due_soon", "upcoming")
                 and r["days_out"] is not None and r["days_out"] <= horizon_days]

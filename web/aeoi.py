@@ -243,12 +243,13 @@ def validate(entity: dict, profile: dict | None = None,
             "readiness": readiness}
 
 
-def portfolio_aeoi(store, today: date | None = None) -> list[dict]:
+def portfolio_aeoi(store, today: date | None = None, team_id=None) -> list[dict]:
     """AEOI readiness for every entity, worst-first (errors, then warnings).
-    Each row: entity fields + classification + counts + readiness."""
+    Each row: entity fields + classification + counts + readiness. Scoped to
+    ``team_id`` when given."""
     today = today or date.today()
     rows = []
-    for e in store.list_entities(limit=5000):
+    for e in store.list_entities(limit=5000, team_id=team_id):
         v = validate(e, today=today)
         rows.append({
             "id": e["id"], "name": e["name"], "type": e.get("type"),

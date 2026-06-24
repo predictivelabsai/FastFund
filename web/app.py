@@ -219,6 +219,10 @@ display:flex;align-items:center;justify-content:space-between}
 .w8hint{font-size:10.5px;margin-top:2px;min-height:12px}
 .w8actions{margin:14px 0 4px}
 .w8stamp{display:none;margin-top:10px;background:#eaf5ee;color:#1c7c44;border:1px solid #b7e0c4;border-radius:8px;padding:8px 10px;font-weight:600}
+.teamchip{color:#ece3ee;font-size:13px;font-weight:600;padding:2px 0}
+.teamsel{width:100%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer}
+.teamsel option{color:#1a1a1a}
+.rolepill{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600}
 """)
 
 MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
@@ -243,6 +247,48 @@ def require(sess):
     if LOGIN_REQUIRED and not current_user(sess):
         return RedirectResponse("/login", status_code=303)
     return None
+
+
+def is_admin(sess):
+    """True if the signed-in user is a global platform admin."""
+    return bool(sess) and sess.get("role") == "admin"
+
+
+def admin_only(sess):
+    """Gate for admin-only routes. Returns a redirect/response if not allowed."""
+    if LOGIN_REQUIRED and not current_user(sess):
+        return RedirectResponse("/login", status_code=303)
+    if LOGIN_REQUIRED and not is_admin(sess):
+        return Page(sess, H1("Not authorised"),
+                    P("This area is for administrators.", cls="muted"),
+                    title="Forbidden · TaxHub")
+    return None
+
+
+def active_team_id(sess):
+    """The team whose client data the user is currently viewing."""
+    return sess.get("team_id") if sess else None
+
+
+def team_scope(sess):
+    """team_id to filter client data (entities/obligations/chats) by. When
+    LOGIN_REQUIRED is off (public/dev), returns None so everything is visible."""
+    if not LOGIN_REQUIRED:
+        return None
+    return active_team_id(sess)
+
+
+def establish_session(sess, user_id, email):
+    """Populate the session after a successful login (password or OAuth):
+    uid, email, global role, name, and the active team (first team joined)."""
+    sess["uid"] = user_id
+    sess["email"] = email
+    u = store.get_user(user_id) or {}
+    sess["role"] = u.get("role") or "user"
+    sess["name"] = u.get("name") or (email.split("@")[0] if email else "")
+    teams = store.list_teams_for_user(user_id)
+    sess["team_id"] = teams[0]["id"] if teams else None
+    sess["team_name"] = teams[0]["name"] if teams else ""
 
 
 app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "taxhub-2026"),
@@ -336,8 +382,7 @@ def login_submit(sess, email: str = "", password: str = ""):
     user = store.get_user_by_email(email)
     if user and user["password_hash"] and bcrypt.checkpw(
             password.encode(), user["password_hash"].encode()):
-        sess["uid"] = user["id"]
-        sess["email"] = user.get("email") or email
+        establish_session(sess, user["id"], user.get("email") or email.strip().lower())
         return RedirectResponse("/", status_code=303)
     return RedirectResponse("/login?error=Invalid+credentials", status_code=303)
 
@@ -346,6 +391,200 @@ def login_submit(sess, email: str = "", password: str = ""):
 def logout(sess):
     sess.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+def _role_pill(role):
+    col = "#6b1766" if role == "admin" else "#1c7c44" if role == "member" else "#7a7a85"
+    return Span(role or "member", cls="rolepill",
+               style=f"background:{col}22;color:{col}")
+
+
+# ── Team switching ───────────────────────────────────────────────────────────
+@rt("/switch-team")
+def switch_team(sess, team_id: int = 0):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    teams = store.list_teams_for_user(current_user(sess))
+    match = next((t for t in teams if t["id"] == team_id), None)
+    if match:
+        sess["team_id"] = match["id"]
+        sess["team_name"] = match["name"]
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+# ── My profile ───────────────────────────────────────────────────────────────
+@rt("/profile")
+def profile(sess, saved: str = ""):
+    if (r := require(sess)):
+        return r
+    uid = current_user(sess)
+    u = store.get_user(uid) or {}
+    teams = store.list_teams_for_user(uid)
+    return Page(sess,
+        H1("My profile"),
+        (P("✓ Saved.", style="color:#1c7c44") if saved else ""),
+        Dl(Dt("Email"), Dd(u.get("email") or "—"),
+           Dt("Global role"), Dd(_role_pill(u.get("role"))),
+           Dt("Teams"), Dd(*[Span(f"{t['name']} ", _role_pill(t["role"]),
+                                   style="margin-right:10px") for t in teams] or ["—"]),
+           cls="formmeta"),
+        H2("Update details"),
+        Form(
+            Div(Label("Display name", style="font-size:13px;color:var(--muted)"),
+                Input(name="name", value=u.get("name") or "", style="width:100%"),
+                style="margin:6px 0"),
+            Div(Label("New password (leave blank to keep)", style="font-size:13px;color:var(--muted)"),
+                Input(name="password", type="password", placeholder="••••••••", style="width:100%"),
+                style="margin:6px 0"),
+            Button("Save", cls="btn", style="margin-top:8px"),
+            method="post", action="/profile"),
+        title="Profile · TaxHub")
+
+
+@rt("/profile", methods=["POST"])
+def profile_save(sess, name: str = "", password: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    uid = current_user(sess)
+    if name.strip():
+        store.update_user_name(uid, name.strip())
+        sess["name"] = name.strip()
+    if password.strip():
+        import bcrypt
+        store.set_user_password(uid, bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
+    return RedirectResponse("/profile?saved=1", status_code=303)
+
+
+# ── Admin: users ─────────────────────────────────────────────────────────────
+@rt("/admin/users")
+def admin_users(sess):
+    if (r := admin_only(sess)):
+        return r
+    users = store.list_users()
+    teams = store.list_teams()
+    team_opts = {t["id"]: t["name"] for t in teams}
+
+    def urow(u):
+        ut = store.list_teams_for_user(u["id"])
+        role_form = Form(
+            Select(*[Option(rl.capitalize(), value=rl, selected=(rl == u.get("role")))
+                     for rl in ("admin", "user")], name="role", onchange="this.form.submit()",
+                   style="padding:3px 6px;border:1px solid var(--line);border-radius:6px"),
+            Input(type="hidden", name="user_id", value=str(u["id"])),
+            method="post", action="/admin/users/role", style="display:inline")
+        add_form = Form(
+            Select(*[Option(t["name"], value=str(t["id"])) for t in teams], name="team_id",
+                   style="padding:3px 6px;border:1px solid var(--line);border-radius:6px"),
+            Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+                   name="role", style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;margin:0 4px"),
+            Input(type="hidden", name="user_id", value=str(u["id"])),
+            Button("+ Add", cls="btn", style="padding:3px 9px;font-size:12px"),
+            method="post", action="/admin/teams/member", style="display:inline")
+        return Tr(Td(u.get("email")), Td(u.get("name") or "—"), Td(role_form),
+                  Td(*[Span(f"{t['name']} ", _role_pill(t["role"]), style="margin-right:6px")
+                       for t in ut] or ["—"]),
+                  Td(add_form))
+    return Page(sess,
+        H1("Users"),
+        P(f"{len(users)} users. Set a user's global role (admin can manage users & "
+          "teams) or add them to a team.", cls="muted"),
+        Table(Tr(Th("Email"), Th("Name"), Th("Global role"), Th("Teams"), Th("Add to team")),
+              *[urow(u) for u in users]),
+        title="Users · TaxHub")
+
+
+@rt("/admin/users/role", methods=["POST"])
+def admin_set_role(sess, user_id: int = 0, role: str = ""):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if role in ("admin", "user") and user_id:
+        store.set_user_role(user_id, role)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+# ── Admin: teams ─────────────────────────────────────────────────────────────
+@rt("/admin/teams")
+def admin_teams(sess, created: str = ""):
+    if (r := admin_only(sess)):
+        return r
+    teams = store.list_teams()
+    rows = [Tr(Td(A(t["name"], href=f"/admin/teams/{t['id']}")),
+               Td(str(t.get("members", 0))), Td(str(t.get("entities", 0))),
+               Td(t.get("created_at", "")[:10]))
+            for t in teams]
+    return Page(sess,
+        H1("Teams"),
+        (P("✓ Team created.", style="color:#1c7c44") if created else ""),
+        P("Each team is an isolated workspace — its entities, obligations and chats "
+          "are private to its members. The tax-law corpus is shared across all teams.",
+          cls="muted"),
+        Form(Input(name="name", placeholder="New team name", required=True,
+                   style="padding:7px;border:1px solid var(--line);border-radius:7px;width:50%"),
+             Button("Create team", cls="btn", style="margin-left:6px"),
+             method="post", action="/admin/teams/create", style="margin:12px 0"),
+        Table(Tr(Th("Team"), Th("Members"), Th("Entities"), Th("Created")), *rows),
+        title="Teams · TaxHub")
+
+
+@rt("/admin/teams/create", methods=["POST"])
+def admin_team_create(sess, name: str = ""):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if name.strip():
+        store.create_team(name.strip())
+    return RedirectResponse("/admin/teams?created=1", status_code=303)
+
+
+@rt("/admin/teams/{team_id}")
+def admin_team_detail(sess, team_id: int):
+    if (r := admin_only(sess)):
+        return r
+    t = store.get_team(team_id)
+    if not t:
+        return Page(sess, H1("Team not found"))
+    members = store.list_team_members(team_id)
+    member_ids = {m["user_id"] for m in members}
+    non_members = [u for u in store.list_users() if u["id"] not in member_ids]
+
+    def mrow(m):
+        rm = Form(Input(type="hidden", name="user_id", value=str(m["user_id"])),
+                  Input(type="hidden", name="team_id", value=str(team_id)),
+                  Button("Remove", cls="btn", style="background:#b0353a;padding:2px 9px;font-size:12px"),
+                  method="post", action="/admin/teams/member/remove", style="display:inline")
+        return Tr(Td(m["email"]), Td(m.get("name") or "—"), Td(_role_pill(m["role"])), Td(rm))
+    add = Form(
+        Select(*[Option(f"{u['email']}", value=str(u["id"])) for u in non_members],
+               name="user_id", style="padding:5px;border:1px solid var(--line);border-radius:6px"),
+        Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+               name="role", style="padding:5px;border:1px solid var(--line);border-radius:6px;margin:0 4px"),
+        Input(type="hidden", name="team_id", value=str(team_id)),
+        Button("Add member", cls="btn"),
+        method="post", action="/admin/teams/member") if non_members else P("All users are members.", cls="muted")
+    return Page(sess,
+        H1(t["name"]),
+        P(A("← All teams", href="/admin/teams"), cls="muted"),
+        H2("Members"),
+        Table(Tr(Th("Email"), Th("Name"), Th("Team role"), Th("")), *[mrow(m) for m in members]),
+        H2("Add a member"), add,
+        title=f"{t['name']} · TaxHub")
+
+
+@rt("/admin/teams/member", methods=["POST"])
+def admin_team_add_member(sess, team_id: int = 0, user_id: int = 0, role: str = "member"):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if team_id and user_id:
+        store.add_team_member(team_id, user_id, role if role in ("admin", "member") else "member")
+    return RedirectResponse(f"/admin/teams/{team_id}", status_code=303)
+
+
+@rt("/admin/teams/member/remove", methods=["POST"])
+def admin_team_remove_member(sess, team_id: int = 0, user_id: int = 0):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if team_id and user_id:
+        store.remove_team_member(team_id, user_id)
+    return RedirectResponse(f"/admin/teams/{team_id}", status_code=303)
 
 
 # ── Google OAuth: redirect to Google, then handle the callback ────────────────
@@ -378,8 +617,12 @@ if OAUTH_ENABLED:
             return RedirectResponse("/login?error=This+Google+account+is+not+permitted",
                                     status_code=303)
         user = store.get_or_create_oauth_user(email, info.get("name"))
-        sess["uid"] = user["id"]
-        sess["email"] = user["email"]
+        # New OAuth users land in the default team so they're never team-less.
+        if not store.list_teams_for_user(user["id"]):
+            teams = store.list_teams()
+            if teams:
+                store.add_team_member(teams[0]["id"], user["id"], "member")
+        establish_session(sess, user["id"], user["email"])
         return RedirectResponse("/", status_code=303)
 
 
@@ -468,10 +711,34 @@ def tree_component():
     return Div(*nodes)
 
 
+def team_switcher(sess):
+    """Active-team chip + a switcher when the user belongs to more than one team."""
+    uid = current_user(sess)
+    if not uid:
+        return ""
+    teams = store.list_teams_for_user(uid)
+    if not teams:
+        return ""
+    cur = active_team_id(sess)
+    cur_name = next((t["name"] for t in teams if t["id"] == cur), teams[0]["name"])
+    if len(teams) <= 1:
+        return Div(Div("Team", cls="lbl"),
+                   Div(f"🏢 {cur_name}", cls="teamchip"), cls="section")
+    return Div(Div("Team", cls="lbl"),
+        Select(*[Option(t["name"], value=str(t["id"]), selected=(t["id"] == cur))
+                 for t in teams],
+               onchange="location='/switch-team?team_id='+this.value", cls="teamsel"),
+        cls="section")
+
+
 def left_pane(sess):
     sessions = store.list_chat_sessions(user_email(sess), limit=15) if user_email(sess) else []
+    admin_links = ([A("👤 Users", href="/admin/users", cls="navlink"),
+                    A("🏢 Teams", href="/admin/teams", cls="navlink")]
+                   if is_admin(sess) else [])
     return Div(
         Div("JTC ", Span("TaxHub"), cls="brand"),
+        team_switcher(sess),
         A("+ New chat", href="/", cls="newchat"),
         Div(Div("Recent chats", cls="lbl"),
             *[A(s.get("title") or "Chat", href=f"/?sid={s['id']}", cls="sess")
@@ -493,7 +760,9 @@ def left_pane(sess):
             *[Div(B(p), " ", desc, cls="shortcut", onclick=f"fillChat({ex!r})")
               for p, desc, ex in SHORTCUTS],
             cls="section"),
-        Div(Div("Help", cls="lbl"),
+        Div(Div("Account", cls="lbl"),
+            A("👤 My profile", href="/profile", cls="navlink"),
+            *admin_links,
             A("📘 User Guide", href="/help", cls="navlink"),
             A("🛠 Technical Guide", href="/technical-guide", cls="navlink"),
             A("🌳 Document Hierarchy", href="/document-hierarchy", cls="navlink"),
@@ -884,13 +1153,14 @@ def Page(sess, *content, title="TaxHub", with_copilot=True, ctx="default"):
 def dashboard(sess):
     if (r := require(sess)):
         return r
+    tid = team_scope(sess)
     st = store.stats()
     jurs = store.list_jurisdictions_with_counts()
-    metrics = {"entities": store.count_entities(),
+    metrics = {"entities": store.count_entities(team_id=tid),
                **{k: v for k, v in st.items() if not isinstance(v, list)}}
-    # Compliance roll-up across all obligations.
+    # Compliance roll-up across this team's obligations.
     from collections import Counter
-    all_obs = store.list_obligations(limit=10000)
+    all_obs = store.list_obligations(limit=10000, team_id=tid)
     by_status = Counter(o.get("status") or "not_started" for o in all_obs)
     total = len(all_obs)
     done = by_status.get("filed", 0) + by_status.get("confirmed", 0)
@@ -903,7 +1173,7 @@ def dashboard(sess):
                 Span(" filed / confirmed", style="color:var(--muted)"),
                 style="margin-bottom:6px"),
             P(A(f"{total} obligations", href="/obligations"), " across ",
-              A(f"{store.count_entities()} entities", href="/entities"), " · ",
+              A(f"{store.count_entities(team_id=tid)} entities", href="/entities"), " · ",
               A(f"{unver} awaiting sign-off", href="/obligations"),
               style="color:var(--muted);font-size:13px"),
             Table(Tr(Th("Status"), Th("Count")),
@@ -914,7 +1184,7 @@ def dashboard(sess):
         style="margin:14px 0")
     # Upcoming deadlines (resolved dates) — the Monitor roll-up.
     from datetime import date
-    dig = monitor.deadline_digest(store, date.today(), horizon_days=90)
+    dig = monitor.deadline_digest(store, date.today(), horizon_days=90, team_id=tid)
     nxt = (dig["overdue"] + dig["upcoming"])[:6]
     deadlines = Div(
         H2("Deadlines"),
@@ -1182,9 +1452,10 @@ def _jur_badges(codes):
 def entities(sess, added: str = ""):
     if (r := require(sess)):
         return r
-    ents = store.list_entities(limit=1000)
+    tid = team_scope(sess)
+    ents = store.list_entities(limit=1000, team_id=tid)
     from collections import Counter
-    all_obs = store.list_obligations(limit=10000)
+    all_obs = store.list_obligations(limit=10000, team_id=tid)
     n_by_ent = Counter(o["entity_id"] for o in all_obs)
     done_by_ent = Counter(o["entity_id"] for o in all_obs
                           if (o.get("status") in ("filed", "confirmed")))
@@ -1251,7 +1522,8 @@ def entity_create(sess, name: str = "", type: str = "company", domicile: str = "
         "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", jurisdictions) if j.strip()],
         "fy_end": fy_end.strip() or None,
         "activities": [a.strip() for a in re.split(r"[,;|]", activities) if a.strip()],
-        "client_ref": client_ref.strip() or None, "status": "active"})
+        "client_ref": client_ref.strip() or None, "status": "active",
+        "team_id": active_team_id(sess)})
     return RedirectResponse("/entities?added=1", status_code=303)
 
 
@@ -1273,7 +1545,8 @@ async def entities_import(sess, csv_file: UploadFile):
             "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", row.get("jurisdictions") or "") if j.strip()],
             "fy_end": (row.get("fy_end") or "").strip() or None,
             "activities": [a.strip() for a in re.split(r"[,;|]", row.get("activities") or "") if a.strip()],
-            "client_ref": (row.get("client_ref") or "").strip() or None, "status": "active"})
+            "client_ref": (row.get("client_ref") or "").strip() or None, "status": "active",
+            "team_id": active_team_id(sess)})
         n += 1
     return RedirectResponse("/entities?added=1", status_code=303)
 
@@ -1285,6 +1558,11 @@ def entity_view(sess, entity_id: int):
     e = store.get_entity(entity_id)
     if not e:
         return Page(sess, H1("Entity not found"))
+    tid = team_scope(sess)
+    if tid is not None and e.get("team_id") != tid:
+        return Page(sess, H1("Entity not in your team"),
+                    P("This entity belongs to a different team. Switch teams to view it.",
+                      cls="muted"), title="Not available · TaxHub")
     from datetime import date
     today = date.today()
     obs = [monitor.annotate(o, e, today) for o in store.list_obligations(entity_id=entity_id)]
@@ -1375,11 +1653,12 @@ def obligation_verify(sess, ob_id: int):
 def obligations_all(sess, status: str = "", jur: str = ""):
     if (r := require(sess)):
         return r
-    obs = store.list_obligations(status=status or None, limit=10000)
+    tid = team_scope(sess)
+    obs = store.list_obligations(status=status or None, limit=10000, team_id=tid)
     if jur:
         obs = [o for o in obs if o.get("jurisdiction_code") == jur]
-    ents = {e["id"]: e["name"] for e in store.list_entities(limit=2000)}
-    jurs = sorted({o.get("jurisdiction_code") for o in store.list_obligations(limit=10000) if o.get("jurisdiction_code")})
+    ents = {e["id"]: e["name"] for e in store.list_entities(limit=2000, team_id=tid)}
+    jurs = sorted({o.get("jurisdiction_code") for o in store.list_obligations(limit=10000, team_id=tid) if o.get("jurisdiction_code")})
     def opt(v, label, cur):
         return Option(label, value=v, selected=(v == cur))
     filters = Div(
@@ -1438,7 +1717,7 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
         return r
     from datetime import date
     today = date.today()
-    cal = monitor.portfolio_calendar(store, today)
+    cal = monitor.portfolio_calendar(store, today, team_id=team_scope(sess))
     counts = {u: sum(1 for r in cal if r["urgency"] == u) for u in monitor.URGENCY_LABEL}
     rows_all = cal
     if urg:
@@ -1560,7 +1839,7 @@ def aeoi_view(sess, readiness: str = ""):
         return r
     from datetime import date
     today = date.today()
-    rows = aeoi.portfolio_aeoi(store, today)
+    rows = aeoi.portfolio_aeoi(store, today, team_id=team_scope(sess))
     summ = aeoi.portfolio_summary(rows)
     if readiness:
         rows = [r for r in rows if r["readiness"] == readiness]
@@ -1686,7 +1965,7 @@ def coverage_view(sess):
         return r
     import json as _json
     from web import coverage as cov
-    pf = cov.portfolio_matrix(store, OB_STATUS)
+    pf = cov.portfolio_matrix(store, OB_STATUS, team_id=team_scope(sess))
     cat = cov.catalogue_matrix(store)
 
     # ── Portfolio lens payload (entity × status) ────────────────────────────

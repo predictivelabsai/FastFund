@@ -70,6 +70,8 @@ class Neo4jStore(Storage):
         ("change_uid", "Change", "uid"),
         ("instrument_key", "Instrument", "key"),
         ("counter_name", "Counter", "name"),
+        ("team_uid", "Team", "uid"),
+        ("invite_token", "Invite", "token"),
     ]
 
     def init_db(self) -> None:
@@ -99,6 +101,7 @@ class Neo4jStore(Storage):
                  "($name, ['Version'], ['text_content'])", {"name": _FULLTEXT_INDEX}),
             ])
         self._seed_admin()
+        self._seed_platform()
 
     def _seed_admin(self) -> None:
         import bcrypt
@@ -120,6 +123,178 @@ class Neo4jStore(Storage):
             uid=uid, e=email, p=pw_hash, n=name, r=role, now=utcnow(),
         )
         return uid
+
+    # ── Teams / RBAC seeding ───────────────────────────────────────────────
+    PLATFORM_ADMINS = ("julian@predictivelabs.co.uk", "kaljuvee@gmail.com")
+    DEFAULT_TEAM = "JTC Group"
+
+    def _seed_platform(self) -> None:
+        """Default team, platform admins (global admin + team admin), backfill
+        every user into the team, and attach team-less entities. Idempotent."""
+        import bcrypt
+        extra = [e.strip().lower() for e in
+                 os.environ.get("PLATFORM_ADMINS", "").split(",") if e.strip()]
+        admins = list(dict.fromkeys(list(self.PLATFORM_ADMINS) + extra))
+        default_pw = bcrypt.hashpw(
+            os.environ.get("ADMIN_PASSWORD", "Funds2$2").encode(), bcrypt.gensalt()).decode()
+        with self._session() as s:
+            s.write_transaction(self._seed_platform_tx, admins, default_pw, self.DEFAULT_TEAM)
+
+    @classmethod
+    def _seed_platform_tx(cls, tx, admins, default_pw, team_name):
+        now = utcnow()
+        rec = tx.run("MATCH (t:Team {name:$n}) RETURN t.uid AS uid", n=team_name).single()
+        team_id = rec["uid"] if rec else cls._next_id(tx, "Team")
+        if not rec:
+            tx.run("CREATE (t:Team {uid:$uid, name:$n, created_at:$now})",
+                   uid=team_id, n=team_name, now=now)
+        for email in admins:
+            u = tx.run("MATCH (u:User {email:$e}) RETURN u.uid AS uid, u.role AS role",
+                       e=email).single()
+            if not u:
+                uid = cls._next_id(tx, "User")
+                tx.run("CREATE (u:User {uid:$uid, email:$e, password_hash:$p, name:$n, "
+                       "role:'admin', created_at:$now})",
+                       uid=uid, e=email, p=default_pw, n=email.split("@")[0], now=now)
+            else:
+                uid = u["uid"]
+                if u["role"] != "admin":
+                    tx.run("MATCH (u:User {uid:$uid}) SET u.role='admin'", uid=uid)
+            tx.run("MATCH (u:User {uid:$uid}),(t:Team {uid:$t}) "
+                   "MERGE (u)-[m:MEMBER_OF]->(t) "
+                   "ON CREATE SET m.role='admin', m.created_at=$now "
+                   "SET m.role='admin'", uid=uid, t=team_id, now=now)
+        # Backfill: every user joins the default team as member if not already in it.
+        tx.run("MATCH (u:User) WHERE NOT (u)-[:MEMBER_OF]->(:Team) "
+               "MATCH (t:Team {uid:$t}) "
+               "MERGE (u)-[m:MEMBER_OF]->(t) "
+               "ON CREATE SET m.role='member', m.created_at=$now", t=team_id, now=now)
+        # Attach team-less entities to the default team.
+        tx.run("MATCH (e:Entity) WHERE e.team_id IS NULL SET e.team_id=$t", t=team_id)
+
+    # ── Users (profile + RBAC) ─────────────────────────────────────────────
+    def get_user(self, user_id: int) -> dict | None:
+        with self._session() as s:
+            r = s.run("MATCH (u:User {uid:$i}) RETURN u.uid AS id, u.email AS email, "
+                      "u.name AS name, u.role AS role, u.created_at AS created_at",
+                      i=user_id).single()
+            return dict(r) if r else None
+
+    def list_users(self) -> list[dict]:
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                "MATCH (u:User) RETURN u.uid AS id, u.email AS email, u.name AS name, "
+                "u.role AS role, u.created_at AS created_at ORDER BY u.email")]
+
+    def set_user_role(self, user_id: int, role: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (u:User {uid:$i}) SET u.role=$r", i=user_id, r=role)
+
+    def set_user_password(self, user_id: int, password_hash: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (u:User {uid:$i}) SET u.password_hash=$p", i=user_id, p=password_hash)
+
+    def update_user_name(self, user_id: int, name: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (u:User {uid:$i}) SET u.name=$n", i=user_id, n=name)
+
+    # ── Teams / membership ─────────────────────────────────────────────────
+    def create_team(self, name: str) -> int:
+        with self._session() as s:
+            return s.write_transaction(self._create_team, name)
+
+    @classmethod
+    def _create_team(cls, tx, name) -> int:
+        uid = cls._next_id(tx, "Team")
+        tx.run("CREATE (t:Team {uid:$uid, name:$n, created_at:$now})",
+               uid=uid, n=name, now=utcnow())
+        return uid
+
+    def list_teams(self) -> list[dict]:
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                "MATCH (t:Team) "
+                "OPTIONAL MATCH (t)<-[:MEMBER_OF]-(u:User) "
+                "WITH t, count(DISTINCT u) AS members "
+                "OPTIONAL MATCH (e:Entity {team_id:t.uid}) "
+                "RETURN t.uid AS id, t.name AS name, t.created_at AS created_at, "
+                "members, count(DISTINCT e) AS entities ORDER BY t.name")]
+
+    def get_team(self, team_id: int) -> dict | None:
+        with self._session() as s:
+            r = s.run("MATCH (t:Team {uid:$i}) RETURN t.uid AS id, t.name AS name, "
+                      "t.created_at AS created_at", i=team_id).single()
+            return dict(r) if r else None
+
+    def add_team_member(self, team_id: int, user_id: int, role: str = "member") -> None:
+        with self._session() as s:
+            s.run("MATCH (u:User {uid:$u}),(t:Team {uid:$t}) "
+                  "MERGE (u)-[m:MEMBER_OF]->(t) "
+                  "ON CREATE SET m.created_at=$now SET m.role=$r",
+                  u=user_id, t=team_id, r=role, now=utcnow())
+
+    def remove_team_member(self, team_id: int, user_id: int) -> None:
+        with self._session() as s:
+            s.run("MATCH (u:User {uid:$u})-[m:MEMBER_OF]->(t:Team {uid:$t}) DELETE m",
+                  u=user_id, t=team_id)
+
+    def list_team_members(self, team_id: int) -> list[dict]:
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                "MATCH (u:User)-[m:MEMBER_OF]->(t:Team {uid:$t}) "
+                "RETURN u.uid AS user_id, u.email AS email, u.name AS name, m.role AS role "
+                "ORDER BY u.email", t=team_id)]
+
+    def list_teams_for_user(self, user_id: int) -> list[dict]:
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                "MATCH (u:User {uid:$u})-[m:MEMBER_OF]->(t:Team) "
+                "RETURN t.uid AS id, t.name AS name, m.role AS role ORDER BY t.name",
+                u=user_id)]
+
+    def team_role(self, team_id: int, user_id: int) -> str | None:
+        with self._session() as s:
+            r = s.run("MATCH (u:User {uid:$u})-[m:MEMBER_OF]->(t:Team {uid:$t}) "
+                      "RETURN m.role AS role", u=user_id, t=team_id).single()
+            return r["role"] if r else None
+
+    # ── Invites ────────────────────────────────────────────────────────────
+    def create_invite(self, email: str, team_id: int | None, role: str,
+                      token: str, inviter_id: int | None, expires_at: str) -> int:
+        with self._session() as s:
+            return s.write_transaction(
+                self._create_invite, email.strip().lower(), team_id, role, token,
+                inviter_id, expires_at)
+
+    @classmethod
+    def _create_invite(cls, tx, email, team_id, role, token, inviter_id, expires_at) -> int:
+        uid = cls._next_id(tx, "Invite")
+        tx.run("CREATE (i:Invite {uid:$uid, email:$e, team_id:$t, role:$r, token:$k, "
+               "inviter_id:$iv, created_at:$now, expires_at:$x, used_at:null})",
+               uid=uid, e=email, t=team_id, r=role, k=token, iv=inviter_id,
+               now=utcnow(), x=expires_at)
+        return uid
+
+    def get_invite_by_token(self, token: str) -> dict | None:
+        with self._session() as s:
+            r = s.run("MATCH (i:Invite {token:$k}) RETURN i.uid AS id, i.email AS email, "
+                      "i.team_id AS team_id, i.role AS role, i.token AS token, "
+                      "i.inviter_id AS inviter_id, i.created_at AS created_at, "
+                      "i.expires_at AS expires_at, i.used_at AS used_at", k=token).single()
+            return dict(r) if r else None
+
+    def mark_invite_used(self, token: str) -> None:
+        with self._session() as s:
+            s.run("MATCH (i:Invite {token:$k}) SET i.used_at=$now", k=token, now=utcnow())
+
+    def list_invites(self, team_id: int | None = None) -> list[dict]:
+        clause = "WHERE i.team_id=$t " if team_id is not None else ""
+        with self._session() as s:
+            return [dict(r) for r in s.run(
+                f"MATCH (i:Invite) {clause}RETURN i.uid AS id, i.email AS email, "
+                "i.team_id AS team_id, i.role AS role, i.created_at AS created_at, "
+                "i.expires_at AS expires_at, i.used_at AS used_at "
+                "ORDER BY i.created_at DESC", t=team_id)]
 
     # ── Jurisdictions / documents (write) ──────────────────────────────────
 
@@ -611,15 +786,17 @@ class Neo4jStore(Storage):
 
     # ── Entities ───────────────────────────────────────────────────────────
     _ENTITY_PROPS = ("name", "type", "domicile", "jurisdictions", "fy_end",
-                     "activities", "client_ref", "status")
+                     "activities", "client_ref", "status", "team_id")
     _ENTITY_RETURN = (
         "e.uid AS id, e.name AS name, e.type AS type, e.domicile AS domicile, "
         "coalesce(e.jurisdictions,[]) AS jurisdictions, e.fy_end AS fy_end, "
         "coalesce(e.activities,[]) AS activities, e.client_ref AS client_ref, "
-        "e.status AS status")
+        "e.status AS status, e.team_id AS team_id")
 
     def upsert_entity(self, entity: dict) -> int:
         props = {k: entity[k] for k in self._ENTITY_PROPS if k in entity}
+        if props.get("team_id") is None:   # never clobber an existing team with null
+            props.pop("team_id", None)
         key = entity.get("client_ref") or entity.get("name")
         with self._session() as s:
             return s.write_transaction(self._upsert_entity, key, props)
@@ -648,19 +825,22 @@ class Neo4jStore(Storage):
                       i=entity_id).single()
             return dict(r) if r else None
 
-    def list_entities(self, limit: int = 500) -> list[dict]:
+    def list_entities(self, limit: int = 500, team_id: int | None = None) -> list[dict]:
+        clause = "WHERE e.team_id=$tid " if team_id is not None else ""
         with self._session() as s:
             return [dict(r) for r in s.run(
-                f"MATCH (e:Entity) RETURN {self._ENTITY_RETURN} "
-                "ORDER BY e.name LIMIT $lim", lim=limit)]
+                f"MATCH (e:Entity) {clause}RETURN {self._ENTITY_RETURN} "
+                "ORDER BY e.name LIMIT $lim", lim=limit, tid=team_id)]
 
     def delete_entity(self, entity_id: int) -> None:
         with self._session() as s:
             s.run("MATCH (e:Entity {uid:$i}) DETACH DELETE e", i=entity_id)
 
-    def count_entities(self) -> int:
+    def count_entities(self, team_id: int | None = None) -> int:
+        clause = "WHERE e.team_id=$tid " if team_id is not None else ""
         with self._session() as s:
-            return s.run("MATCH (e:Entity) RETURN count(e) AS n").single()["n"]
+            return s.run(f"MATCH (e:Entity) {clause}RETURN count(e) AS n",
+                         tid=team_id).single()["n"]
 
     # ── Obligations ────────────────────────────────────────────────────────
     _OB_DESC = ("title", "jurisdiction_code", "category", "deadline", "period")
@@ -700,18 +880,22 @@ class Neo4jStore(Storage):
                       i=obligation_id).single()
             return dict(r) if r else None
 
-    def list_obligations(self, entity_id=None, status=None, limit=1000) -> list[dict]:
+    def list_obligations(self, entity_id=None, status=None, limit=1000,
+                         team_id=None) -> list[dict]:
         where = []
         if entity_id is not None:
             where.append("o.entity_id=$eid")
         if status:
             where.append("o.status=$status")
+        match = "MATCH (o:Obligation)"
+        if team_id is not None:
+            match = "MATCH (e:Entity {team_id:$tid})-[:HAS_OBLIGATION]->(o:Obligation)"
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         with self._session() as s:
             return [dict(r) for r in s.run(
-                f"MATCH (o:Obligation) {clause} RETURN {self._OB_RETURN} "
+                f"{match} {clause} RETURN {self._OB_RETURN} "
                 "ORDER BY o.jurisdiction_code, o.category LIMIT $lim",
-                eid=entity_id, status=status, lim=limit)]
+                eid=entity_id, status=status, lim=limit, tid=team_id)]
 
     def set_obligation_status(self, obligation_id: int, status: str) -> None:
         with self._session() as s:
@@ -728,17 +912,18 @@ class Neo4jStore(Storage):
             s.run("MATCH (o:Obligation {uid:$i}) DETACH DELETE o", i=obligation_id)
 
     # ── Chat history ───────────────────────────────────────────────────────
-    def create_chat_session(self, user_email: str, title: str = "") -> int:
+    def create_chat_session(self, user_email: str, title: str = "",
+                            team_id: int | None = None) -> int:
         with self._session() as s:
-            return s.write_transaction(self._create_chat_session, user_email, title)
+            return s.write_transaction(self._create_chat_session, user_email, title, team_id)
 
     @classmethod
-    def _create_chat_session(cls, tx, user_email, title) -> int:
+    def _create_chat_session(cls, tx, user_email, title, team_id=None) -> int:
         uid = cls._next_id(tx, "ChatSession")
         now = utcnow()
-        tx.run("CREATE (cs:ChatSession {uid:$uid, user_email:$e, title:$t, "
+        tx.run("CREATE (cs:ChatSession {uid:$uid, user_email:$e, team_id:$tid, title:$t, "
                "created_at:$now, updated_at:$now})",
-               uid=uid, e=user_email, t=title or "New chat", now=now)
+               uid=uid, e=user_email, tid=team_id, t=title or "New chat", now=now)
         return uid
 
     def add_chat_message(self, session_id: int, role: str, content: str) -> None:
