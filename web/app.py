@@ -271,6 +271,28 @@ def admin_only(sess):
     return None
 
 
+def is_team_admin(sess, team_id):
+    """True if the user is a global admin or an admin of ``team_id``."""
+    if is_admin(sess):
+        return True
+    uid = current_user(sess)
+    return bool(uid and team_id and store.team_role(team_id, uid) == "admin")
+
+
+def teams_i_admin(sess):
+    """Teams the user may administer: all of them for a global admin, else the
+    teams where they hold the team-admin role."""
+    if is_admin(sess):
+        return store.list_teams()
+    uid = current_user(sess)
+    return [t for t in (store.list_teams_for_user(uid) if uid else [])
+            if t.get("role") == "admin"]
+
+
+def can_invite(sess):
+    return is_admin(sess) or bool(teams_i_admin(sess))
+
+
 def active_team_id(sess):
     """The team whose client data the user is currently viewing."""
     return sess.get("team_id") if sess else None
@@ -382,14 +404,34 @@ def login_form(sess, error: str = ""):
         method="post", action="/login", cls="form")
 
 
+# Simple in-memory login throttle: max N failures per email per window.
+_LOGIN_FAILS: dict = {}
+_LOGIN_MAX = 8
+_LOGIN_WINDOW = 300  # seconds
+
+
+def _login_blocked(email: str, now: float) -> bool:
+    hits = [t for t in _LOGIN_FAILS.get(email, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[email] = hits
+    return len(hits) >= _LOGIN_MAX
+
+
 @rt("/login", methods=["POST"])
 def login_submit(sess, email: str = "", password: str = ""):
     import bcrypt
-    user = store.get_user_by_email(email)
+    import time
+    email_n = (email or "").strip().lower()
+    now = time.time()
+    if _login_blocked(email_n, now):
+        return RedirectResponse("/login?error=Too+many+attempts.+Try+again+in+a+few+minutes",
+                                status_code=303)
+    user = store.get_user_by_email(email_n)
     if user and user["password_hash"] and bcrypt.checkpw(
             password.encode(), user["password_hash"].encode()):
-        establish_session(sess, user["id"], user.get("email") or email.strip().lower())
+        _LOGIN_FAILS.pop(email_n, None)
+        establish_session(sess, user["id"], user.get("email") or email_n)
         return RedirectResponse("/", status_code=303)
+    _LOGIN_FAILS.setdefault(email_n, []).append(now)
     return RedirectResponse("/login?error=Invalid+credentials", status_code=303)
 
 
@@ -456,6 +498,8 @@ def profile_save(sess, name: str = "", password: str = ""):
         store.update_user_name(uid, name.strip())
         sess["name"] = name.strip()
     if password.strip():
+        if len(password) < 8:
+            return RedirectResponse("/profile?saved=0", status_code=303)
         import bcrypt
         store.set_user_password(uid, bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
     return RedirectResponse("/profile?saved=1", status_code=303)
@@ -544,11 +588,15 @@ def admin_team_create(sess, name: str = ""):
 
 @rt("/admin/teams/{team_id}")
 def admin_team_detail(sess, team_id: int):
-    if (r := admin_only(sess)):
+    if (r := require(sess)):
         return r
+    if not is_team_admin(sess, team_id):
+        return Page(sess, H1("Not authorised"),
+                    P("You must be an admin of this team.", cls="muted"))
     t = store.get_team(team_id)
     if not t:
         return Page(sess, H1("Team not found"))
+    back = "/admin/teams" if is_admin(sess) else "/"
     members = store.list_team_members(team_id)
     member_ids = {m["user_id"] for m in members}
     non_members = [u for u in store.list_users() if u["id"] not in member_ids]
@@ -569,7 +617,7 @@ def admin_team_detail(sess, team_id: int):
         method="post", action="/admin/teams/member") if non_members else P("All users are members.", cls="muted")
     return Page(sess,
         H1(t["name"]),
-        P(A("← All teams", href="/admin/teams"), cls="muted"),
+        P(A("← Back", href=back), cls="muted"),
         H2("Members"),
         Table(Tr(Th("Email"), Th("Name"), Th("Team role"), Th("")), *[mrow(m) for m in members]),
         H2("Add a member"), add,
@@ -578,7 +626,7 @@ def admin_team_detail(sess, team_id: int):
 
 @rt("/admin/teams/member", methods=["POST"])
 def admin_team_add_member(sess, team_id: int = 0, user_id: int = 0, role: str = "member"):
-    if (admin_only(sess) is not None) and not is_admin(sess):
+    if (require(sess)) or not is_team_admin(sess, team_id):
         return RedirectResponse("/login", status_code=303)
     if team_id and user_id:
         store.add_team_member(team_id, user_id, role if role in ("admin", "member") else "member")
@@ -587,7 +635,7 @@ def admin_team_add_member(sess, team_id: int = 0, user_id: int = 0, role: str = 
 
 @rt("/admin/teams/member/remove", methods=["POST"])
 def admin_team_remove_member(sess, team_id: int = 0, user_id: int = 0):
-    if (admin_only(sess) is not None) and not is_admin(sess):
+    if (require(sess)) or not is_team_admin(sess, team_id):
         return RedirectResponse("/login", status_code=303)
     if team_id and user_id:
         store.remove_team_member(team_id, user_id)
@@ -602,20 +650,39 @@ def _base_url(request):
 
 
 @rt("/admin/invite", methods=["GET"])
-def admin_invite(sess, sent: str = "", err: str = ""):
-    if (r := admin_only(sess)):
+def admin_invite(sess, sent: str = "", err: str = "", revoked: str = ""):
+    if (r := require(sess)):
         return r
-    teams = store.list_teams()
+    if not can_invite(sess):
+        return Page(sess, H1("Not authorised"),
+                    P("Only team admins can invite users.", cls="muted"))
+    teams = teams_i_admin(sess)
+    team_ids = {t["id"] for t in teams}
     cur = active_team_id(sess)
-    recent = store.list_invites()[:15]
+    all_teams = {t["id"]: t["name"] for t in store.list_teams()}
+    # A team admin only sees invites for teams they administer.
+    recent = [i for i in store.list_invites()
+              if is_admin(sess) or i.get("team_id") in team_ids][:15]
+
     def irow(i):
-        status = ("✓ accepted" if i.get("used_at") else "pending")
+        used = i.get("used_at")
+        status = (Span("✓ accepted", style="color:#1c7c44") if used else Span("pending", cls="muted"))
+        actions = "" if used else Span(
+            Form(Input(type="hidden", name="email", value=i.get("email")),
+                 Input(type="hidden", name="team_id", value=str(i.get("team_id") or "")),
+                 Input(type="hidden", name="role", value=i.get("role") or "member"),
+                 Button("Resend", cls="btn", style="padding:2px 8px;font-size:11px"),
+                 method="post", action="/admin/invite", style="display:inline"),
+            Form(Input(type="hidden", name="invite_id", value=str(i.get("id"))),
+                 Button("Revoke", cls="btn", style="padding:2px 8px;font-size:11px;background:#b0353a;margin-left:4px"),
+                 method="post", action="/admin/invite/revoke", style="display:inline"))
         return Tr(Td(i.get("email")), Td(_role_pill(i.get("role"))),
-                  Td(next((t["name"] for t in teams if t["id"] == i.get("team_id")), "—")),
-                  Td(status), Td((i.get("created_at") or "")[:10]))
+                  Td(all_teams.get(i.get("team_id"), "—")),
+                  Td(status), Td((i.get("created_at") or "")[:10]), Td(actions))
     return Page(sess,
         H1("Invite a user"),
         (P("✓ Invitation sent.", style="color:#1c7c44") if sent else ""),
+        (P("✓ Invitation revoked.", style="color:#1c7c44") if revoked else ""),
         (P(f"⚠ {err}", style="color:#c0392b") if err else ""),
         P("Send a branded email invite. The recipient sets a password (or signs in "
           "with Google) and joins the chosen team.", cls="muted"),
@@ -631,19 +698,31 @@ def admin_invite(sess, sent: str = "", err: str = ""):
             Button("✉ Send invitation", cls="btn", style="margin-top:10px"),
             method="post", action="/admin/invite"),
         H2("Recent invitations"),
-        (Table(Tr(Th("Email"), Th("Role"), Th("Team"), Th("Status"), Th("Sent")),
+        (Table(Tr(Th("Email"), Th("Role"), Th("Team"), Th("Status"), Th("Sent"), Th("")),
                *[irow(i) for i in recent]) if recent else P("None yet.", cls="muted")),
         title="Invite · TaxHub")
 
 
+@rt("/admin/invite/revoke", methods=["POST"])
+def admin_invite_revoke(sess, invite_id: int = 0):
+    if (require(sess)) or not can_invite(sess):
+        return RedirectResponse("/login", status_code=303)
+    if invite_id:
+        store.delete_invite(invite_id)
+    return RedirectResponse("/admin/invite?revoked=1", status_code=303)
+
+
 @rt("/admin/invite", methods=["POST"])
 def admin_invite_send(sess, request, email: str = "", team_id: int = 0, role: str = "member"):
-    if (admin_only(sess) is not None) and not is_admin(sess):
+    if (require(sess)) or not can_invite(sess):
         return RedirectResponse("/login", status_code=303)
+    # A team admin may only invite into teams they administer.
+    if not is_admin(sess) and team_id not in {t["id"] for t in teams_i_admin(sess)}:
+        return RedirectResponse("/admin/invite?err=Not+an+admin+of+that+team", status_code=303)
     import secrets
     from datetime import datetime, timedelta, timezone
     email = (email or "").strip().lower()
-    if "@" not in email:
+    if "@" not in email or "." not in email.split("@")[-1]:
         return RedirectResponse("/admin/invite?err=Enter+a+valid+email", status_code=303)
     token = secrets.token_urlsafe(32)
     expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(timespec="seconds")
@@ -704,8 +783,8 @@ def invite_accept_post(sess, token: str, name: str = "", password: str = ""):
     inv = store.get_invite_by_token(token)
     if not inv or inv.get("used_at"):
         return RedirectResponse("/login?error=Invitation+not+valid", status_code=303)
-    if len(password) < 6:
-        return RedirectResponse(f"/invite/{token}?err=Password+must+be+6%2B+characters",
+    if len(password) < 8:
+        return RedirectResponse(f"/invite/{token}?err=Password+must+be+8%2B+characters",
                                 status_code=303)
     import bcrypt
     email = inv["email"].strip().lower()
@@ -793,6 +872,30 @@ def admin_judge_run(sess, scope: str = "team"):
     res = chat_eval.run_judge(store, team_id=tid, limit=25)
     return RedirectResponse(f"/admin/analytics?scope={scope}&judged={res['judged']}",
                             status_code=303)
+
+
+@rt("/admin/events", methods=["GET"])
+def admin_events(sess, scope: str = "team"):
+    if (r := admin_only(sess)):
+        return r
+    tid = None if scope == "all" else active_team_id(sess)
+    events = store.list_events(limit=300, team_id=tid)
+    rows = [Tr(Td((e.get("created_at") or "")[:19].replace("T", " ")),
+               Td(Code(e.get("type") or "", style="font-size:11px")),
+               Td(e.get("user_email") or "—"),
+               Td((e.get("data") or "")[:90], style="color:var(--muted);font-size:12px"))
+            for e in events]
+    return Page(sess,
+        H1("Audit log"),
+        P("Append-only record of platform activity — logins, invites, chat turns "
+          "and feedback. Useful for support and compliance.", cls="muted"),
+        Div(A("My team", href="/admin/events?scope=team",
+              cls="btn" if scope != "all" else "", style="margin-right:6px"),
+            A("All teams", href="/admin/events?scope=all",
+              cls="btn" if scope == "all" else ""), style="margin:8px 0"),
+        (Table(Tr(Th("When (UTC)"), Th("Event"), Th("User"), Th("Detail")), *rows)
+         if rows else P("No events yet.", cls="muted")),
+        title="Audit log · TaxHub")
 
 
 # ── Google OAuth: redirect to Google, then handle the callback ────────────────
@@ -940,11 +1043,20 @@ def team_switcher(sess):
 
 
 def left_pane(sess):
-    sessions = store.list_chat_sessions(user_email(sess), limit=15) if user_email(sess) else []
-    admin_links = ([A("👤 Users", href="/admin/users", cls="navlink"),
-                    A("🏢 Teams", href="/admin/teams", cls="navlink"),
-                    A("📊 Chat analytics", href="/admin/analytics", cls="navlink")]
-                   if is_admin(sess) else [])
+    sessions = (store.list_chat_sessions(user_email(sess), limit=15,
+                                         team_id=active_team_id(sess))
+                if user_email(sess) else [])
+    admin_links = []
+    if is_admin(sess):
+        admin_links = [A("👤 Users", href="/admin/users", cls="navlink"),
+                       A("🏢 Teams", href="/admin/teams", cls="navlink"),
+                       A("📊 Chat analytics", href="/admin/analytics", cls="navlink"),
+                       A("📜 Audit log", href="/admin/events", cls="navlink")]
+    elif teams_i_admin(sess):  # team admin (not global): manage their own team
+        admin_links = [A(f"🏢 Manage {t['name']}", href=f"/admin/teams/{t['id']}",
+                         cls="navlink") for t in teams_i_admin(sess)]
+    if can_invite(sess):
+        admin_links.insert(0, A("✉ Invite a user", href="/admin/invite", cls="navlink"))
     return Div(
         Div("JTC ", Span("TaxHub"), cls="brand"),
         team_switcher(sess),
@@ -1051,7 +1163,10 @@ function thumbs(bubble,mid){if(!bubble||!mid||bubble.querySelector('.fb'))return
   dn.onclick=function(){sendFb(mid,-1,w,dn);};
   w.appendChild(up);w.appendChild(dn);bubble.appendChild(w);}
 function sendFb(mid,rating,w,btn){
+  var comment='';
+  if(rating===-1){comment=window.prompt('Optional — what was wrong with this answer?')||'';}
   var p=new URLSearchParams();p.append('message_id',mid);p.append('rating',String(rating));
+  if(comment)p.append('comment',comment);
   fetch('/chat-feedback',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()}).catch(function(){});
   Array.prototype.forEach.call(w.querySelectorAll('.fbb'),function(b){b.disabled=true;b.style.opacity='.3';});
   btn.style.opacity='1';btn.classList.add('chosen');}
@@ -1142,6 +1257,23 @@ def home(sess, sid: int = 0):
 
 
 # ── Chat SSE ────────────────────────────────────────────────────────────────
+AUTO_JUDGE = os.environ.get("AUTO_JUDGE", "1") == "1"
+_BG_TASKS: set = set()
+
+
+async def _auto_judge(message_id: int, question: str, answer: str) -> None:
+    """Score a turn with the LLM judge off the response path. Best-effort."""
+    import asyncio
+    try:
+        v = await asyncio.get_event_loop().run_in_executor(
+            None, chat_eval.judge_turn, question, answer)
+        if v:
+            store.add_message_judge(message_id, v["score"], v["verdict"], v["relevance"],
+                                    v["groundedness"], v["completeness"], v["reason"], v["model"])
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _shortcut(msg: str):
     low = msg.strip().lower()
     if low.startswith("form:"):
@@ -1167,8 +1299,12 @@ async def chat(sess, msg: str = "", sid: int = 0):
         sid = store.create_chat_session(email, title=msg[:48], team_id=tid)
     store.add_chat_message(sid, "user", msg)
     from agents import sse as S
+    from agents.tools import active_team
+    # Scope the chat agents to this user's active team (data isolation).
+    active_team.set(tid)
 
     async def stream():
+        active_team.set(tid)
         yield S.event("session", {"sid": sid})
         sc = _shortcut(msg)
         if sc is not None:
@@ -1193,10 +1329,13 @@ async def chat(sess, msg: str = "", sid: int = 0):
                 answer = "".join(acc) or "(no response)"
                 mid = store.add_chat_message(sid, "assistant", answer)
                 try:
-                    store.log_event("chat_turn", email, tid,
-                                    (msg or "")[:120])
+                    store.log_event("chat_turn", email, tid, (msg or "")[:120])
                 except Exception:  # noqa: BLE001
                     pass
+                if AUTO_JUDGE and mid:  # score quality in the background (Phase E)
+                    import asyncio
+                    t = asyncio.create_task(_auto_judge(mid, msg, answer))
+                    _BG_TASKS.add(t); t.add_done_callback(_BG_TASKS.discard)
                 yield S.event(S.DONE, {"tools": tools, "mid": mid})
             else:
                 yield ev

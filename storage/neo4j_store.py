@@ -287,6 +287,10 @@ class Neo4jStore(Storage):
         with self._session() as s:
             s.run("MATCH (i:Invite {token:$k}) SET i.used_at=$now", k=token, now=utcnow())
 
+    def delete_invite(self, invite_id: int) -> None:
+        with self._session() as s:
+            s.run("MATCH (i:Invite {uid:$i}) DETACH DELETE i", i=invite_id)
+
     def list_invites(self, team_id: int | None = None) -> list[dict]:
         clause = "WHERE i.team_id=$t " if team_id is not None else ""
         with self._session() as s:
@@ -940,13 +944,16 @@ class Neo4jStore(Storage):
                sid=session_id, uid=uid, r=role, c=content, now=now)
         return uid
 
-    def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
+    def list_chat_sessions(self, user_email: str, limit: int = 30,
+                          team_id=None) -> list[dict]:
+        flt = "" if team_id is None else "AND (cs.team_id=$tid OR cs.team_id IS NULL) "
         with self._session() as s:
             return s.run(
                 "MATCH (cs:ChatSession {user_email:$e}) "
+                f"WHERE 1=1 {flt}"
                 "RETURN cs.uid AS id, cs.title AS title, cs.updated_at AS updated_at "
                 "ORDER BY cs.updated_at DESC LIMIT $lim",
-                e=user_email, lim=limit).data()
+                e=user_email, tid=team_id, lim=limit).data()
 
     def get_chat_messages(self, session_id: int) -> list[dict]:
         with self._session() as s:

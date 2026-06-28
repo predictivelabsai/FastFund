@@ -7,10 +7,18 @@ parses ``[form:<id>]`` / ``[doc:<id>]`` markers to render open-in-viewer links.
 """
 from __future__ import annotations
 
+import contextvars
+
 from langchain_core.tools import tool
 
 import taxstore as store
 from rag import retrieval as taxrag
+
+# The team whose client data the entity/AEOI/W-8 tools may see. Set per chat
+# request in the /chat handler; defaults to None (no scoping) for CLI/tests.
+# A ContextVar keeps it correct under concurrent requests, and propagates into
+# the tools even when LangChain runs the sync tools in an executor.
+active_team: contextvars.ContextVar = contextvars.ContextVar("active_team", default=None)
 
 # How the form is filed — make this unambiguous in answers.
 FILING_LABELS = {
@@ -89,8 +97,9 @@ def changes_agent(jurisdiction_code: str = "") -> str:
 
 
 def _resolve_entities(entity: str) -> list[dict]:
-    """Entities whose name or client_ref contains ``entity`` (all if blank)."""
-    ents = store.list_entities(limit=5000)
+    """Entities whose name or client_ref contains ``entity`` (all if blank),
+    restricted to the caller's active team so chat can't cross team boundaries."""
+    ents = store.list_entities(limit=5000, team_id=active_team.get())
     if not entity:
         return ents
     q = entity.strip().lower()

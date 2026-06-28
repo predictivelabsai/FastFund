@@ -460,6 +460,10 @@ class SqliteStore(Storage):
             c.execute(text("UPDATE invites SET used_at=:n WHERE token=:k"),
                       {"n": utcnow(), "k": token})
 
+    def delete_invite(self, invite_id: int) -> None:
+        with self.conn() as c:
+            c.execute(text("DELETE FROM invites WHERE id=:i"), {"i": invite_id})
+
     def list_invites(self, team_id: int | None = None) -> list[dict]:
         clause = "WHERE team_id=:t" if team_id is not None else ""
         with self.conn() as c:
@@ -1083,12 +1087,17 @@ class SqliteStore(Storage):
                       {"now": now, "s": session_id})
             return int(res.lastrowid)
 
-    def list_chat_sessions(self, user_email: str, limit: int = 30) -> list[dict]:
+    def list_chat_sessions(self, user_email: str, limit: int = 30,
+                          team_id=None) -> list[dict]:
+        where = "WHERE user_email=:e"
+        params = {"e": user_email, "lim": limit}
+        if team_id is not None:
+            where += " AND (team_id=:t OR team_id IS NULL)"
+            params["t"] = team_id
         with self.conn() as c:
             return [dict(r) for r in c.execute(text(
-                "SELECT id, title, updated_at FROM chat_sessions WHERE user_email=:e "
-                "ORDER BY updated_at DESC LIMIT :lim"),
-                {"e": user_email, "lim": limit}).mappings().all()]
+                f"SELECT id, title, updated_at FROM chat_sessions {where} "
+                "ORDER BY updated_at DESC LIMIT :lim"), params).mappings().all()]
 
     def get_chat_messages(self, session_id: int) -> list[dict]:
         with self.conn() as c:
