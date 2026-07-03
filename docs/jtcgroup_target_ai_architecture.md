@@ -4,15 +4,35 @@ _Two reference architectures for the production AI platform on Azure: **open-sou
 
 A slide version is at [`jtcgroup_target_ai_architecture.pdf`](jtcgroup_target_ai_architecture.pdf) / [`.pptx`](jtcgroup_target_ai_architecture.pptx).
 
-## The baseline application (both options share this)
+## The baseline platform (both options share this)
 
-Both architectures run the same AI application — only the managed services underneath differ.
+Both architectures run the same skill-driven AI platform — only the managed services underneath differ.
 
-- FastHTML 3-pane agentic app, containerised (Docker) — runs unchanged.
-- LangGraph orchestrator routing to specialist agents (form-finder, tax-law, entity, AEOI/W-8).
-- LLM access through an OpenAI-compatible layer — the provider is a config switch, not a code change.
-- Pluggable storage interface (graph or relational) + Blob for form PDFs.
-- Per-team isolation, RBAC, invites, chat logging, 👍/👎 feedback and LLM-judge evals already built in.
+- Skill-driven: domain skill packs (single family office lead, tax, project management) loaded on demand — new domains ship as skills, not apps.
+- Tools & data reached through MCP servers — one open, model-agnostic interface, reusable across every skill.
+- LangGraph orchestrator routes each request to the right skill + agents.
+- LLM via an OpenAI-compatible layer — the provider is a config switch, not a code change (Anthropic Claude default).
+- Containerised app (Docker) with per-team isolation, RBAC, invites, chat logging, 👍/👎 feedback and LLM-judge evals built in.
+
+## Skill library — modular domain skill packs
+
+The platform is skill-driven: each capability is a versioned skill pack (instructions + tools + MCP bindings) the orchestrator loads on demand. New domains ship as new skill packs — not new applications.
+
+- **Single family office lead skills** — Lead sourcing & qualification, relationship intelligence, prospect research, suitability & mandate drafting, onboarding / KYC
+- **Tax skills** — Form finding, obligation determination, FATCA/CRS readiness, W-8 preparation, regulatory-change monitoring with citations
+- **Project management skills** — Workstream & task planning, deadline / milestone tracking, status & RAID reporting, resourcing
+- **Skill anatomy** — Each pack = a SKILL.md (instructions) + tools + MCP bindings — hot-swappable, versioned and permission-scoped per team
+
+## MCP servers — standard tool & data access
+
+Agents reach tools and data through Model Context Protocol (MCP) servers — a standard, pluggable interface any MCP-capable model (Anthropic Claude natively) can call. Skills bind to the servers they need.
+
+- **Portfolio / entity MCP** — Entities, obligations, filings, AEOI readiness
+- **Document & RAG MCP** — Tax-law corpus, retrieval, citations
+- **CRM / relationship MCP** — Contacts, mandates, pipeline — for the family-office lead skills
+- **Filings & authority MCP** — Form catalogues, e-file portals, deadlines
+- **Office MCP** — Email, calendar & documents (Microsoft 365 / Google)
+- **Market & reference MCP** — External market and reference data
 
 ## Option 1 — Open-source & portable — RECOMMENDED
 
@@ -22,7 +42,8 @@ Managed Azure PaaS for the plumbing, open-source for the brain — no lock-in, f
 - **Azure Blob Storage** — Form PDFs & scraped source documents
 - **Azure Database for PostgreSQL** — Entities, obligations, chat logs, feedback & evals · pgvector for embeddings · optional Apache AGE for the citation graph
 - **Azure AI Foundry (model catalog)** — Pluggable LLMs — Anthropic Claude default (Opus 4.8 reasoning / Sonnet 4.6 cost); swap to OpenAI, Llama, Mistral with no code change
-- **LangGraph** — Agent orchestrator — already in the codebase
+- **LangGraph + skill packs** — Agent orchestrator loads the SFO-lead / tax / project-management skill packs on demand
+- **MCP servers (containers)** — Standard tool & data access — portfolio, docs, CRM, filings, office; reusable across every skill
 - **Langfuse** — Open-source LLM observability: traces, evals, cost, user feedback (self-host or Langfuse Cloud)
 - **Key Vault + Entra ID** — Secrets & single sign-on
 
@@ -56,6 +77,8 @@ Managed Azure PaaS for the plumbing, open-source for the brain — no lock-in, f
 Foundry Agent Service + Microsoft Fabric — least ops, deepest Microsoft integration, at the cost of portability.
 
 - **Azure AI Foundry Agent Service** — Managed agents, built-in tool-calling, threads & multi-agent orchestration (replaces custom LangGraph)
+- **Skills as connected agents** — SFO-lead / tax / project-management skill packs map to Foundry connected agents & tool sets
+- **MCP tools in Foundry** — Foundry Agent Service consumes the same MCP servers as managed tools
 - **Azure AI Search** — Managed vector + hybrid RAG over the corpus
 - **Microsoft Fabric (OneLake)** — Unified data lake for tax docs · Lakehouse / Warehouse · Data Factory ingestion pipelines
 - **Power BI** — Firmwide compliance & filing dashboards on Fabric data
@@ -87,6 +110,8 @@ Foundry Agent Service + Microsoft Fabric — least ops, deepest Microsoft integr
 |---|---|---|
 | Compute | Container Apps (Docker) | Foundry Agent Service (managed) |
 | Orchestration | LangGraph (code) | Foundry Agents (managed) |
+| Skills | Portable skill packs (SKILL.md + tools) | Foundry connected agents / tool sets |
+| Tool access | MCP servers (open standard, reusable) | MCP tools within Foundry |
 | LLMs | Foundry catalog — Anthropic default, fully swappable | Azure OpenAI default; Claude via catalog |
 | Data | PostgreSQL (+pgvector/AGE) + Blob | Fabric OneLake + AI Search |
 | Observability | Langfuse (open-source) | Azure Monitor + Foundry evals |
@@ -101,3 +126,4 @@ Foundry Agent Service + Microsoft Fabric — least ops, deepest Microsoft integr
 - Default to Option 1 (open-source & portable): keeps Anthropic Claude as the primary model with freedom to swap, reuses the current LangGraph app, and avoids lock-in. Langfuse adds production-grade observability on top of the in-app analytics.
 - Choose Option 2 when JTC wants a fully-managed, Microsoft-native stack with Fabric / Power BI for firmwide reporting and accepts Azure lock-in plus the migration effort.
 - Hybrid path: start on Option 1 (fast, low-risk, portable), then adopt Fabric / Power BI for analytics later if firmwide BI becomes a priority — the pluggable storage and OpenAI-compatible LLM layer make that incremental, not a rebuild.
+- The domain IP — the family-office lead, tax and project-management skill packs plus the MCP servers — is portable across both options, so the investment in skills carries over regardless of the deployment choice.

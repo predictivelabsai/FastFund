@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 STEM = "jtcgroup_target_ai_architecture"
+VERSION = "v2.0"
 
 # JTC brand palette.
 NAVY = "#550055"
@@ -39,22 +40,51 @@ RED = "#b0353a"
 SLIDES = [
     {"kind": "title", "title": "JTC Group — Target AI Architecture",
      "big2": "Target AI Architecture",
-     "subtitle": "Production AI platform — two reference deployment architectures on Azure",
+     "subtitle": "Skill-driven AI platform — two reference deployment architectures on Azure",
      "tagline": "Open-source & portable  ·  vs  ·  Microsoft-managed",
-     "footer": "Reference architecture · Draft for review"},
+     "footer": f"Reference architecture · {VERSION} · Draft for review"},
 
-    {"kind": "bullets", "title": "The baseline application (both options share this)",
-     "intro": "Both architectures run the same AI application — only the managed "
-              "services underneath differ.",
+    {"kind": "bullets", "title": "The baseline platform (both options share this)",
+     "intro": "Both architectures run the same skill-driven AI platform — only the "
+              "managed services underneath differ.",
      "bullets": [
-        "FastHTML 3-pane agentic app, containerised (Docker) — runs unchanged.",
-        "LangGraph orchestrator routing to specialist agents (form-finder, "
-        "tax-law, entity, AEOI/W-8).",
-        "LLM access through an OpenAI-compatible layer — the provider is a config "
-        "switch, not a code change.",
-        "Pluggable storage interface (graph or relational) + Blob for form PDFs.",
-        "Per-team isolation, RBAC, invites, chat logging, 👍/👎 feedback and "
-        "LLM-judge evals already built in."]},
+        "Skill-driven: domain skill packs (single family office lead, tax, "
+        "project management) loaded on demand — new domains ship as skills, not apps.",
+        "Tools & data reached through MCP servers — one open, model-agnostic "
+        "interface, reusable across every skill.",
+        "LangGraph orchestrator routes each request to the right skill + agents.",
+        "LLM via an OpenAI-compatible layer — the provider is a config switch, "
+        "not a code change (Anthropic Claude default).",
+        "Containerised app (Docker) with per-team isolation, RBAC, invites, chat "
+        "logging, 👍/👎 feedback and LLM-judge evals built in."]},
+
+    {"kind": "components", "title": "Skill library — modular domain skill packs",
+     "intro": "The platform is skill-driven: each capability is a versioned skill "
+              "pack (instructions + tools + MCP bindings) the orchestrator loads on "
+              "demand. New domains ship as new skill packs — not new applications.",
+     "rows": [
+        ("Single family office lead skills", "Lead sourcing & qualification, "
+         "relationship intelligence, prospect research, suitability & mandate "
+         "drafting, onboarding / KYC"),
+        ("Tax skills", "Form finding, obligation determination, FATCA/CRS "
+         "readiness, W-8 preparation, regulatory-change monitoring with citations"),
+        ("Project management skills", "Workstream & task planning, deadline / "
+         "milestone tracking, status & RAID reporting, resourcing"),
+        ("Skill anatomy", "Each pack = a SKILL.md (instructions) + tools + MCP "
+         "bindings — hot-swappable, versioned and permission-scoped per team")]},
+
+    {"kind": "components", "title": "MCP servers — standard tool & data access",
+     "intro": "Agents reach tools and data through Model Context Protocol (MCP) "
+              "servers — a standard, pluggable interface any MCP-capable model "
+              "(Anthropic Claude natively) can call. Skills bind to the servers they need.",
+     "rows": [
+        ("Portfolio / entity MCP", "Entities, obligations, filings, AEOI readiness"),
+        ("Document & RAG MCP", "Tax-law corpus, retrieval, citations"),
+        ("CRM / relationship MCP", "Contacts, mandates, pipeline — for the family-"
+         "office lead skills"),
+        ("Filings & authority MCP", "Form catalogues, e-file portals, deadlines"),
+        ("Office MCP", "Email, calendar & documents (Microsoft 365 / Google)"),
+        ("Market & reference MCP", "External market and reference data")]},
 
     {"kind": "components", "title": "Option 1 — Open-source & portable",
      "badge": "RECOMMENDED",
@@ -69,7 +99,10 @@ SLIDES = [
         ("Azure AI Foundry (model catalog)", "Pluggable LLMs — Anthropic Claude "
          "default (Opus 4.8 reasoning / Sonnet 4.6 cost); swap to OpenAI, Llama, "
          "Mistral with no code change"),
-        ("LangGraph", "Agent orchestrator — already in the codebase"),
+        ("LangGraph + skill packs", "Agent orchestrator loads the SFO-lead / tax "
+         "/ project-management skill packs on demand"),
+        ("MCP servers (containers)", "Standard tool & data access — portfolio, "
+         "docs, CRM, filings, office; reusable across every skill"),
         ("Langfuse", "Open-source LLM observability: traces, evals, cost, user "
          "feedback (self-host or Langfuse Cloud)"),
         ("Key Vault + Entra ID", "Secrets & single sign-on")]},
@@ -108,6 +141,10 @@ SLIDES = [
      "rows": [
         ("Azure AI Foundry Agent Service", "Managed agents, built-in tool-calling, "
          "threads & multi-agent orchestration (replaces custom LangGraph)"),
+        ("Skills as connected agents", "SFO-lead / tax / project-management skill "
+         "packs map to Foundry connected agents & tool sets"),
+        ("MCP tools in Foundry", "Foundry Agent Service consumes the same MCP "
+         "servers as managed tools"),
         ("Azure AI Search", "Managed vector + hybrid RAG over the corpus"),
         ("Microsoft Fabric (OneLake)", "Unified data lake for tax docs · "
          "Lakehouse / Warehouse · Data Factory ingestion pipelines"),
@@ -137,6 +174,10 @@ SLIDES = [
      "rows": [
         ["Compute", "Container Apps (Docker)", "Foundry Agent Service (managed)"],
         ["Orchestration", "LangGraph (code)", "Foundry Agents (managed)"],
+        ["Skills", "Portable skill packs (SKILL.md + tools)",
+         "Foundry connected agents / tool sets"],
+        ["Tool access", "MCP servers (open standard, reusable)",
+         "MCP tools within Foundry"],
         ["LLMs", "Foundry catalog — Anthropic default, fully swappable",
          "Azure OpenAI default; Claude via catalog"],
         ["Data", "PostgreSQL (+pgvector/AGE) + Blob", "Fabric OneLake + AI Search"],
@@ -161,7 +202,10 @@ SLIDES = [
         "Hybrid path: start on Option 1 (fast, low-risk, portable), then adopt "
         "Fabric / Power BI for analytics later if firmwide BI becomes a priority "
         "— the pluggable storage and OpenAI-compatible LLM layer make that "
-        "incremental, not a rebuild."]},
+        "incremental, not a rebuild.",
+        "The domain IP — the family-office lead, tax and project-management skill "
+        "packs plus the MCP servers — is portable across both options, so the "
+        "investment in skills carries over regardless of the deployment choice."]},
 ]
 
 # ── HTML deck ────────────────────────────────────────────────────────────────
@@ -209,7 +253,7 @@ td:first-child{{font-weight:700;color:{NAVY2}}}
 """
 
 FOOT = ('<div class="foot"><span class="b">JTC <span>Group</span></span>'
-        '&nbsp;&nbsp;·&nbsp;&nbsp;Target AI Architecture</div>')
+        f'&nbsp;&nbsp;·&nbsp;&nbsp;Target AI Architecture&nbsp;&nbsp;·&nbsp;&nbsp;{VERSION}</div>')
 
 
 def _slide_html(s):
@@ -339,7 +383,7 @@ def write_pptx():
         foot.line.fill.background(); foot.shadow.inherit = False
         tf = foot.text_frame; tf.margin_top = Pt(2); tf.margin_left = Inches(0.4)
         r = tf.paragraphs[0].add_run()
-        r.text = "JTC Group · Target AI Architecture"
+        r.text = f"JTC Group · Target AI Architecture · {VERSION}"
         r.font.size = Pt(9); r.font.color.rgb = _rgb("FFFFFF")
 
     def add_title(slide, text, badge=None):
