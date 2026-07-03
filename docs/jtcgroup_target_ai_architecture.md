@@ -47,6 +47,16 @@ Managed Azure PaaS for the plumbing, open-source for the brain — no lock-in, f
 - **Langfuse** — Open-source LLM observability: traces, evals, cost, user feedback (self-host or Langfuse Cloud)
 - **Key Vault + Entra ID** — Secrets & single sign-on
 
+## Option 1 — architecture at a glance — OPEN-SOURCE
+
+- **Users** — Back-office & advisors · Entra ID SSO
+- **Experience** — FastHTML app on Azure Container Apps (Docker)
+- **Orchestration & skills** — LangGraph + skill packs — single family office lead · tax · project management
+- **Tools & data (MCP)** — MCP servers — portfolio · docs · CRM · filings · office · market
+- **Intelligence** — Azure AI Foundry — pluggable LLMs · Anthropic Claude default
+- **Data & storage** — PostgreSQL (pgvector / Apache AGE) · Blob · Key Vault
+- **Observability** — Langfuse — traces · evals · cost · user feedback
+
 ## Option 1 — how it flows
 
 - User → Container Apps (FastHTML) over HTTPS with Entra SSO.
@@ -86,6 +96,16 @@ Foundry Agent Service + Microsoft Fabric — least ops, deepest Microsoft integr
 - **Azure Monitor + Foundry evaluations** — Built-in tracing & evaluation
 - **Microsoft Purview** — Governance, data lineage & DLP
 
+## Option 2 — architecture at a glance — MS-MANAGED
+
+- **Users** — Back-office & advisors · Entra ID SSO
+- **Experience** — App / Microsoft Copilot surface
+- **Orchestration & skills** — Foundry Agent Service — managed + connected agents (skill packs)
+- **Tools & data (MCP)** — MCP tools in Foundry · Azure AI Search (RAG)
+- **Intelligence** — Azure OpenAI — Anthropic Claude available via catalog
+- **Data & analytics** — Microsoft Fabric (OneLake) · Power BI
+- **Governance & obs** — Microsoft Purview · Azure Monitor + Foundry evals
+
 ## Option 2 — pros & cons
 
 **Pros**
@@ -120,6 +140,28 @@ Foundry Agent Service + Microsoft Fabric — least ops, deepest Microsoft integr
 | Ops burden | Higher | Lower |
 | Rework | Minimal (reuses code) | Significant |
 | Best for | Portability, model choice, cost control | MS-shop, managed ops, firmwide BI |
+
+## Indicative cost shape
+
+Illustrative only — actuals depend on volume, region, capacity reservations and model mix. $ = lower, $$$ = higher.
+
+| Area | Option 1 · Open-source | Option 2 · MS-managed |
+|---|---|---|
+| Compute | Container Apps — $ (consumption) | Foundry Agent Service — $$ (managed) |
+| Data | PostgreSQL Flexible + Blob — $ | Microsoft Fabric capacity (F-SKU) — $$$ |
+| Search / RAG | pgvector in Postgres — included | Azure AI Search — $$ |
+| LLM | Foundry usage (Claude / others) — $$ | Azure OpenAI usage — $$ |
+| Observability | Langfuse self-hosted — $ | Azure Monitor — $ |
+| Cost shape | Lower fixed · usage-based · portable | Higher fixed (Fabric) · managed |
+
+## Phased rollout
+
+A low-risk path: land the portable stack first, layer in skills + MCP, and adopt managed services only if firmwide BI / ops demand it.
+
+- **Phase 1 · 0–4 weeks** — Land Option 1 on Azure — Container Apps + PostgreSQL + Blob + Azure AI Foundry (Claude default) + Langfuse; migrate the current app; the tax skill pack goes live
+- **Phase 2 · 1–2 months** — Stand up MCP servers (portfolio, docs, CRM, office) and the single-family-office lead + project-management skill packs; per-team rollout
+- **Phase 3 · 2–4 months** — Harden — quality / eval loop, SSO, governance; optional Microsoft Fabric / Power BI for firmwide BI
+- **Phase 4 · optional** — Evaluate the managed Option 2 path for enterprise scale — skills + MCP carry over, so it is incremental, not a rebuild
 
 ## Recommendation
 

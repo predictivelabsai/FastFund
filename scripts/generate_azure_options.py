@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 STEM = "jtcgroup_target_ai_architecture"
-VERSION = "v2.0"
+VERSION = "v2.1"
 
 # JTC brand palette.
 NAVY = "#550055"
@@ -107,6 +107,19 @@ SLIDES = [
          "feedback (self-host or Langfuse Cloud)"),
         ("Key Vault + Entra ID", "Secrets & single sign-on")]},
 
+    {"kind": "layers", "title": "Option 1 — architecture at a glance",
+     "badge": "OPEN-SOURCE",
+     "layers": [
+        ("Users", "Back-office & advisors · Entra ID SSO"),
+        ("Experience", "FastHTML app on Azure Container Apps (Docker)"),
+        ("Orchestration & skills", "LangGraph + skill packs — single family "
+         "office lead · tax · project management"),
+        ("Tools & data (MCP)", "MCP servers — portfolio · docs · CRM · filings · "
+         "office · market"),
+        ("Intelligence", "Azure AI Foundry — pluggable LLMs · Anthropic Claude default"),
+        ("Data & storage", "PostgreSQL (pgvector / Apache AGE) · Blob · Key Vault"),
+        ("Observability", "Langfuse — traces · evals · cost · user feedback")]},
+
     {"kind": "bullets", "title": "Option 1 — how it flows",
      "intro": "",
      "bullets": [
@@ -154,6 +167,18 @@ SLIDES = [
         ("Azure Monitor + Foundry evaluations", "Built-in tracing & evaluation"),
         ("Microsoft Purview", "Governance, data lineage & DLP")]},
 
+    {"kind": "layers", "title": "Option 2 — architecture at a glance",
+     "badge": "MS-MANAGED",
+     "layers": [
+        ("Users", "Back-office & advisors · Entra ID SSO"),
+        ("Experience", "App / Microsoft Copilot surface"),
+        ("Orchestration & skills", "Foundry Agent Service — managed + connected "
+         "agents (skill packs)"),
+        ("Tools & data (MCP)", "MCP tools in Foundry · Azure AI Search (RAG)"),
+        ("Intelligence", "Azure OpenAI — Anthropic Claude available via catalog"),
+        ("Data & analytics", "Microsoft Fabric (OneLake) · Power BI"),
+        ("Governance & obs", "Microsoft Purview · Azure Monitor + Foundry evals")]},
+
     {"kind": "proscons", "title": "Option 2 — pros & cons",
      "pros": [
         "Fully managed — least ops; Microsoft runs the agents, RAG and scaling.",
@@ -188,6 +213,33 @@ SLIDES = [
         ["Rework", "Minimal (reuses code)", "Significant"],
         ["Best for", "Portability, model choice, cost control",
          "MS-shop, managed ops, firmwide BI"]]},
+
+    {"kind": "table", "title": "Indicative cost shape",
+     "intro": "Illustrative only — actuals depend on volume, region, capacity "
+              "reservations and model mix. $ = lower, $$$ = higher.",
+     "headers": ["Area", "Option 1 · Open-source", "Option 2 · MS-managed"],
+     "rows": [
+        ["Compute", "Container Apps — $ (consumption)", "Foundry Agent Service — $$ (managed)"],
+        ["Data", "PostgreSQL Flexible + Blob — $", "Microsoft Fabric capacity (F-SKU) — $$$"],
+        ["Search / RAG", "pgvector in Postgres — included", "Azure AI Search — $$"],
+        ["LLM", "Foundry usage (Claude / others) — $$", "Azure OpenAI usage — $$"],
+        ["Observability", "Langfuse self-hosted — $", "Azure Monitor — $"],
+        ["Cost shape", "Lower fixed · usage-based · portable", "Higher fixed (Fabric) · managed"]]},
+
+    {"kind": "components", "title": "Phased rollout",
+     "intro": "A low-risk path: land the portable stack first, layer in skills + "
+              "MCP, and adopt managed services only if firmwide BI / ops demand it.",
+     "rows": [
+        ("Phase 1 · 0–4 weeks", "Land Option 1 on Azure — Container Apps + "
+         "PostgreSQL + Blob + Azure AI Foundry (Claude default) + Langfuse; "
+         "migrate the current app; the tax skill pack goes live"),
+        ("Phase 2 · 1–2 months", "Stand up MCP servers (portfolio, docs, CRM, "
+         "office) and the single-family-office lead + project-management skill "
+         "packs; per-team rollout"),
+        ("Phase 3 · 2–4 months", "Harden — quality / eval loop, SSO, governance; "
+         "optional Microsoft Fabric / Power BI for firmwide BI"),
+        ("Phase 4 · optional", "Evaluate the managed Option 2 path for enterprise "
+         "scale — skills + MCP carry over, so it is incremental, not a rebuild")]},
 
     {"kind": "bullets", "title": "Recommendation",
      "intro": "",
@@ -244,6 +296,12 @@ th{{background:{NAVY};color:#fff;font-weight:600}}
 tr:nth-child(even) td{{background:#f7f4f9}}
 td:first-child{{font-weight:700;color:{NAVY2}}}
 .title-slide .body{{justify-content:center;padding-left:80px}}
+.layers{{display:flex;flex-direction:column;gap:7px;margin-top:10px}}
+.layer{{display:flex;align-items:stretch;border-radius:8px;overflow:hidden;border:1px solid #e6e3ec}}
+.layer .ltag{{flex:0 0 250px;background:{NAVY};color:#fff;font-weight:700;font-size:15px;
+  padding:11px 16px;display:flex;align-items:center}}
+.layer .litems{{flex:1;background:#f4eff7;color:{INK};font-size:15px;padding:11px 18px;
+  display:flex;align-items:center}}
 .title-slide .big{{font-size:84px;font-weight:800;color:{NAVY};line-height:1}}
 .title-slide .big span{{color:{ACCENT}}}
 .title-slide .big2{{font-size:44px;font-weight:800;color:{ACCENT};line-height:1.05;margin-top:6px}}
@@ -283,6 +341,10 @@ def _slide_html(s):
         th = "".join(f"<th>{h}</th>" for h in s["headers"])
         trs = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in s["rows"])
         body = f"<table><tr>{th}</tr>{trs}</table>"
+    elif k == "layers":
+        rows = "".join(f'<div class="layer"><div class="ltag">{tag}</div>'
+                       f'<div class="litems">{items}</div></div>' for tag, items in s["layers"])
+        body = f'<div class="layers">{rows}</div>'
     else:
         body = ""
     return (f'<div class="slide"><div class="bar"></div><div class="body">'
@@ -315,6 +377,8 @@ def write_md():
             out += [f"- {b}" for b in s["bullets"]]
         elif s["kind"] == "components":
             out += [f"- **{svc}** — {role}" for svc, role in s["rows"]]
+        elif s["kind"] == "layers":
+            out += [f"- **{tag}** — {items}" for tag, items in s["layers"]]
         elif s["kind"] == "proscons":
             out.append("**Pros**\n")
             out += [f"- ✓ {p}" for p in s["pros"]]
@@ -494,6 +558,26 @@ def write_pptx():
                     run.font.size = Pt(11.5)
                     run.font.color.rgb = _rgb(NAVY2 if j == 0 else INK)
                     run.font.bold = (j == 0)
+        elif k == "layers":
+            n = len(s["layers"])
+            top0, lh, gap = Inches(1.5), Inches(0.62), Inches(0.09)
+            for i, (tag, items) in enumerate(s["layers"]):
+                y = Emu(int(top0) + i * (int(lh) + int(gap)))
+                tb = slide.shapes.add_shape(5, Inches(0.5), y, Inches(3.35), lh)
+                tb.fill.solid(); tb.fill.fore_color.rgb = _rgb(NAVY)
+                tb.line.fill.background(); tb.shadow.inherit = False
+                tp = tb.text_frame; tp.word_wrap = True; tp.margin_left = Inches(0.14)
+                tp.vertical_anchor = MSO_ANCHOR.MIDDLE
+                rt = tp.paragraphs[0].add_run(); rt.text = tag
+                rt.font.size = Pt(13); rt.font.bold = True; rt.font.color.rgb = _rgb("FFFFFF")
+                ib = slide.shapes.add_shape(5, Inches(3.98), y, Inches(8.85), lh)
+                ib.fill.solid(); ib.fill.fore_color.rgb = _rgb("F4EFF7")
+                ib.line.color.rgb = _rgb("E6E3EC"); ib.line.width = Pt(0.5)
+                ib.shadow.inherit = False
+                ip = ib.text_frame; ip.word_wrap = True; ip.margin_left = Inches(0.16)
+                ip.vertical_anchor = MSO_ANCHOR.MIDDLE
+                ri = ip.paragraphs[0].add_run(); ri.text = items
+                ri.font.size = Pt(12.5); ri.font.color.rgb = _rgb(INK)
 
     prs.save(str(DOCS / f"{STEM}.pptx"))
     print(f"wrote docs/{STEM}.pptx ({len(SLIDES)} slides)")
