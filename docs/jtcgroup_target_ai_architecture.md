@@ -1,12 +1,12 @@
-# TaxHub on Azure — Deployment Options
+# JTC Group — Target AI Architecture
 
-_Two reference architectures for production: **open-source & portable** vs **Microsoft-managed**. Prepared for JTC Group._
+_Two reference architectures for the production AI platform on Azure: **open-source & portable** vs **Microsoft-managed**._
 
-A slide version is at [`taxhub_azure_options.pdf`](taxhub_azure_options.pdf) / [`.pptx`](taxhub_azure_options.pptx).
+A slide version is at [`jtcgroup_target_ai_architecture.pdf`](jtcgroup_target_ai_architecture.pdf) / [`.pptx`](jtcgroup_target_ai_architecture.pptx).
 
-## The baseline app (both options share this)
+## The baseline application (both options share this)
 
-Both architectures run the same TaxHub application — only the managed services underneath differ.
+Both architectures run the same AI application — only the managed services underneath differ.
 
 - FastHTML 3-pane agentic app, containerised (Docker) — runs unchanged.
 - LangGraph orchestrator routing to specialist agents (form-finder, tax-law, entity, AEOI/W-8).

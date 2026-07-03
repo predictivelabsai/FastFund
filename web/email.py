@@ -30,10 +30,24 @@ DEFAULT_FROM = "info@liquidround.com"
 DEFAULT_FROM_NAME = "TaxHub"
 
 
+def _attachment(path: str) -> dict:
+    """Read a file into a Postmark attachment dict (base64 content)."""
+    import base64
+    import mimetypes
+    from pathlib import Path
+    p = Path(path)
+    ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+    return {"Name": p.name,
+            "Content": base64.b64encode(p.read_bytes()).decode(),
+            "ContentType": ctype}
+
+
 def send_email(*, to: str, subject: str, html_body: str, text_body: str = "",
-               from_email: str | None = None, tag: str = "") -> dict:
-    """Send one email via Postmark. Returns the API response dict, or
-    ``{"skipped": True}`` when no token is set, or ``{"error": "..."}`` on failure."""
+               from_email: str | None = None, tag: str = "",
+               attachments: list[str] | None = None) -> dict:
+    """Send one email via Postmark. ``attachments`` is a list of file paths.
+    Returns the API response dict, or ``{"skipped": True}`` when no token is set,
+    or ``{"error": "..."}`` on failure."""
     token = os.getenv("POSTMARK_API_TOKEN")
     if not token:
         log.warning("POSTMARK_API_TOKEN not set — email to %s skipped", to)
@@ -50,6 +64,8 @@ def send_email(*, to: str, subject: str, html_body: str, text_body: str = "",
         payload["TextBody"] = text_body
     if tag:
         payload["Tag"] = tag
+    if attachments:
+        payload["Attachments"] = [_attachment(a) for a in attachments]
 
     try:
         resp = requests.post(POSTMARK_API_URL, timeout=15,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.12
-"""Build the "TaxHub on Azure — Deployment Options" deck in four formats from one
-content model: docs/taxhub_azure_options.{md,html,pdf,pptx}.
+"""Build the "JTC Group — Target AI Architecture" deck in four formats from one
+content model: docs/jtcgroup_target_ai_architecture.{md,html,pdf,pptx}.
 
 Two reference architectures for production:
   1. Open-source & portable — Container Apps + Blob + PostgreSQL + Azure AI
@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
-STEM = "taxhub_azure_options"
+STEM = "jtcgroup_target_ai_architecture"
 
 # JTC brand palette.
 NAVY = "#550055"
@@ -37,14 +37,15 @@ RED = "#b0353a"
 # Each slide is a dict: {"kind": ..., "title": ..., ...}. Renderers below map
 # each kind to HTML, Markdown, and PPTX.
 SLIDES = [
-    {"kind": "title", "title": "TaxHub on Azure",
-     "subtitle": "Production deployment options — two reference architectures",
+    {"kind": "title", "title": "JTC Group — Target AI Architecture",
+     "big2": "Target AI Architecture",
+     "subtitle": "Production AI platform — two reference deployment architectures on Azure",
      "tagline": "Open-source & portable  ·  vs  ·  Microsoft-managed",
-     "footer": "Prepared for JTC Group"},
+     "footer": "Reference architecture · Draft for review"},
 
-    {"kind": "bullets", "title": "The baseline app (both options share this)",
-     "intro": "Both architectures run the same TaxHub application — only the "
-              "managed services underneath differ.",
+    {"kind": "bullets", "title": "The baseline application (both options share this)",
+     "intro": "Both architectures run the same AI application — only the managed "
+              "services underneath differ.",
      "bullets": [
         "FastHTML 3-pane agentic app, containerised (Docker) — runs unchanged.",
         "LangGraph orchestrator routing to specialist agents (form-finder, "
@@ -199,22 +200,24 @@ th{{background:{NAVY};color:#fff;font-weight:600}}
 tr:nth-child(even) td{{background:#f7f4f9}}
 td:first-child{{font-weight:700;color:{NAVY2}}}
 .title-slide .body{{justify-content:center;padding-left:80px}}
-.title-slide .big{{font-size:92px;font-weight:800;color:{NAVY};line-height:1}}
+.title-slide .big{{font-size:84px;font-weight:800;color:{NAVY};line-height:1}}
 .title-slide .big span{{color:{ACCENT}}}
-.title-slide .sub{{font-size:25px;color:{INK};margin-top:16px;max-width:900px}}
+.title-slide .big2{{font-size:44px;font-weight:800;color:{ACCENT};line-height:1.05;margin-top:6px}}
+.title-slide .sub{{font-size:22px;color:{INK};margin-top:18px;max-width:960px}}
 .title-slide .tag{{font-size:20px;color:{NAVY2};font-weight:700;margin-top:22px}}
 .title-slide .prep{{font-size:16px;color:{MUTED};margin-top:8px}}
 """
 
-FOOT = ('<div class="foot"><span class="b">Tax<span>Hub</span></span>'
-        '&nbsp;&nbsp;·&nbsp;&nbsp;Azure Deployment Options&nbsp;&nbsp;·&nbsp;&nbsp;JTC Group</div>')
+FOOT = ('<div class="foot"><span class="b">JTC <span>Group</span></span>'
+        '&nbsp;&nbsp;·&nbsp;&nbsp;Target AI Architecture</div>')
 
 
 def _slide_html(s):
     k = s["kind"]
     if k == "title":
         return (f'<div class="slide title-slide"><div class="bar"></div><div class="body">'
-                f'<div class="big">Tax<span>Hub</span> on Azure</div>'
+                f'<div class="big">JTC <span>Group</span></div>'
+                f'<div class="big2">{s["big2"]}</div>'
                 f'<div class="sub">{s["subtitle"]}</div>'
                 f'<div class="tag">{s["tagline"]}</div>'
                 f'<div class="prep">{s["footer"]}</div></div>{FOOT}</div>')
@@ -245,7 +248,7 @@ def _slide_html(s):
 def write_html():
     body = "\n".join(_slide_html(s) for s in SLIDES)
     html = (f"<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>TaxHub on Azure — Deployment Options</title><style>{CSS}</style>"
+            f"<title>JTC Group — Target AI Architecture</title><style>{CSS}</style>"
             f"</head><body>{body}</body></html>")
     (DOCS / f"{STEM}.html").write_text(html)
     print(f"wrote docs/{STEM}.html ({len(SLIDES)} slides)")
@@ -253,11 +256,10 @@ def write_html():
 
 # ── Markdown ─────────────────────────────────────────────────────────────────
 def write_md():
-    out = ["# TaxHub on Azure — Deployment Options\n",
-           "_Two reference architectures for production: **open-source & portable** "
-           "vs **Microsoft-managed**. Prepared for JTC Group._\n",
-           "A slide version is at [`taxhub_azure_options.pdf`](taxhub_azure_options.pdf) "
-           "/ [`.pptx`](taxhub_azure_options.pptx).\n"]
+    out = ["# JTC Group — Target AI Architecture\n",
+           "_Two reference architectures for the production AI platform on Azure: "
+           "**open-source & portable** vs **Microsoft-managed**._\n",
+           f"A slide version is at [`{STEM}.pdf`]({STEM}.pdf) / [`.pptx`]({STEM}.pptx).\n"]
     for s in SLIDES:
         if s["kind"] == "title":
             continue
@@ -337,7 +339,7 @@ def write_pptx():
         foot.line.fill.background(); foot.shadow.inherit = False
         tf = foot.text_frame; tf.margin_top = Pt(2); tf.margin_left = Inches(0.4)
         r = tf.paragraphs[0].add_run()
-        r.text = "TaxHub · Azure Deployment Options · JTC Group"
+        r.text = "JTC Group · Target AI Architecture"
         r.font.size = Pt(9); r.font.color.rgb = _rgb("FFFFFF")
 
     def add_title(slide, text, badge=None):
@@ -363,10 +365,11 @@ def write_pptx():
             box = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), Inches(11.7), Inches(3))
             tf = box.text_frame; tf.word_wrap = True
             p = tf.paragraphs[0]
-            r = p.add_run(); r.text = "TaxHub on Azure"
+            r = p.add_run(); r.text = "JTC Group"
             r.font.size = Pt(54); r.font.bold = True; r.font.color.rgb = _rgb(NAVY)
             for txt, sz, col, bold in [
-                (s["subtitle"], 22, INK, False),
+                (s["big2"], 34, ACCENT, True),
+                (s["subtitle"], 20, INK, False),
                 (s["tagline"], 18, NAVY2, True),
                 (s["footer"], 14, MUTED, False)]:
                 pp = tf.add_paragraph(); rr = pp.add_run(); rr.text = txt
