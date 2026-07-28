@@ -1,4 +1,4 @@
-# TaxHub — LEGISLATIVE SOURCES catalogue (the law / provenance corpus).
+# FastFund — LEGISLATIVE SOURCES catalogue (the law / provenance corpus).
 #
 # ⚠ This file lists LEGISLATION, GUIDANCE, CIRCULARS, GAZETTES and TREATIES only —
 #   the primary law that tax forms implement. Scraped into (:Document)->(:Version)

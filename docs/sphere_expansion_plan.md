@@ -1,17 +1,17 @@
-# TaxHub — Sphere-Inspired Expansion Plan
+# FastFund — Sphere-Inspired Expansion Plan
 
-Evolve TaxHub from a **forms reference + traceability** tool into an **AI-native
+Evolve FastFund from a **forms reference + traceability** tool into an **AI-native
 fund-tax compliance platform**: entity-centric, with the full obligation
 lifecycle. Inspired by [Sphere/getsphere.com](https://www.getsphere.com)'s model
 (Monitor → Register → Calculate → File, powered by an expert-reviewed, codified
-tax engine) — but scoped to JTC's domain: **fund/trust/corporate direct tax,
+tax engine) — but scoped to FastFund's domain: **fund/trust/corporate direct tax,
 economic substance, AEOI (FATCA/CRS), beneficial ownership**. No indirect (VAT/GST).
 
 ## Decisions (locked)
 - **Ambition:** entity-centric compliance platform (funds/SPVs → obligations → deadlines → filing status).
 - **Stages:** build all four — Monitor, Determine, Coverage Map, File-status.
 - **Tax scope:** fund direct-tax only (not VAT/GST).
-- **Entity data:** manual entry + CSV import (design for a future JTC entity-system connector).
+- **Entity data:** manual entry + CSV import (design for a future FastFund entity-system connector).
 
 ## What we reuse (already built)
 - The **26-jurisdiction forms catalogue** with structured `who_files / deadline /

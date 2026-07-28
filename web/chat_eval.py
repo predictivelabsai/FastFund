@@ -19,7 +19,7 @@ from rag import llm as taxai
 JUDGE_SYSTEM = "You are a precise QA evaluator. Return valid JSON only — no prose, no fences."
 
 JUDGE_PROMPT = """\
-You are a strict QA evaluator for **TaxHub**, an assistant for fund back-office tax
+You are a strict QA evaluator for **FastFund**, an assistant for fund back-office tax
 compliance: finding the right tax FORM, answering tax-LAW questions with citations,
 and reporting entities' filing obligations, deadlines and FATCA/CRS readiness.
 

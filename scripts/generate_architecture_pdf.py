@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.12
 """Generate docs/architecture_readme.pdf from docs/architecture_readme.md.
 
-markdown (tables + toc + fenced code) -> JTC-branded HTML -> WeasyPrint PDF.
+markdown (tables + toc + fenced code) -> FF-branded HTML -> WeasyPrint PDF.
 The `[TOC]` marker becomes a navigable, anchor-linked table of contents, and
 WeasyPrint also emits PDF bookmarks from the headings.
 
@@ -20,26 +20,26 @@ ROOT = Path(__file__).resolve().parent.parent
 MD = ROOT / "docs" / "architecture_readme.md"
 PDF = ROOT / "docs" / "architecture_readme.pdf"
 
-# JTC Group brand palette (jtcgroup.com)
+# FastFund brand palette (fastfund.org)
 CSS = """
 @page { size: A4; margin: 22mm 18mm;
-  @bottom-center { content: "JTC TaxHub — Architecture"; font-size: 8pt; color: #9a93a6; }
+  @bottom-center { content: "FastFund — Architecture"; font-size: 8pt; color: #9a93a6; }
   @bottom-right  { content: counter(page); font-size: 8pt; color: #9a93a6; } }
 body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   color: #48484f; font-size: 10.5pt; line-height: 1.5; }
-h1 { color: #550055; font-size: 24pt; border-bottom: 3px solid #ba2a84; padding-bottom: 6px; }
-h2 { color: #6b1766; font-size: 15pt; margin-top: 22px; border-bottom: 1px solid #e6e3ec; padding-bottom: 3px; }
-h3 { color: #6b1766; font-size: 12pt; }
-a { color: #6b1766; text-decoration: none; }
+h1 { color: #0b1f33; font-size: 24pt; border-bottom: 3px solid #0f766e; padding-bottom: 6px; }
+h2 { color: #102a43; font-size: 15pt; margin-top: 22px; border-bottom: 1px solid #e6e3ec; padding-bottom: 3px; }
+h3 { color: #102a43; font-size: 12pt; }
+a { color: #102a43; text-decoration: none; }
 strong { color: #48484f; }
 hr { border: none; border-top: 1px solid #e6e3ec; margin: 18px 0; }
-blockquote { border-left: 3px solid #ba2a84; margin: 12px 0; padding: 2px 14px;
+blockquote { border-left: 3px solid #0f766e; margin: 12px 0; padding: 2px 14px;
   background: #f7f4f9; color: #48484f; }
 table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 9.5pt; }
-th { background: #6b1766; color: #fff; text-align: left; padding: 7px 9px; }
+th { background: #102a43; color: #fff; text-align: left; padding: 7px 9px; }
 td { border-bottom: 1px solid #e6e3ec; padding: 6px 9px; vertical-align: top; }
 tr:nth-child(even) td { background: #f7f4f9; }
-code { background: #efeaf3; color: #6b1766; padding: 1px 5px; border-radius: 4px; font-size: 9pt; }
+code { background: #e6f4f1; color: #102a43; padding: 1px 5px; border-radius: 4px; font-size: 9pt; }
 pre { background: #f5f6f4; border: 1px solid #e6e3ec; border-radius: 6px; padding: 10px 12px;
   font-size: 8.5pt; white-space: pre-wrap; word-wrap: break-word; }
 pre code { background: none; color: #48484f; padding: 0; }
@@ -48,7 +48,7 @@ img { max-width: 100%; border: 1px solid #e6e3ec; border-radius: 6px; margin: 10
 .toc { background: #f5f6f4; border: 1px solid #e6e3ec; border-radius: 8px; padding: 10px 18px; }
 .toc ul { list-style: none; padding-left: 14px; margin: 4px 0; }
 .toc > ul { padding-left: 0; }
-.toc a { color: #6b1766; }
+.toc a { color: #102a43; }
 figure { margin: 14px 0; text-align: center; page-break-inside: avoid; }
 figure img { max-width: 100%; }
 figcaption { color: #9a93a6; font-size: 8.5pt; margin-top: 5px; }
@@ -69,7 +69,7 @@ def main() -> None:
     html_body = markdown.markdown(
         text, extensions=["tables", "toc", "fenced_code", "attr_list"])
 
-    captions = {0: "TaxHub on Azure — target production architecture"}
+    captions = {0: "FastFund on Azure — target production architecture"}
     for i, png in enumerate(pngs):
         b64 = base64.b64encode(png).decode()
         cap = captions.get(i, "")

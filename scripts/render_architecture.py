@@ -28,7 +28,7 @@ MD = ROOT / "docs" / "technical_architecture.md"
 DIAGRAMS = ROOT / "docs" / "diagrams"
 PDF = ROOT / "docs" / "technical_architecture_slides.pdf"
 
-# JTC palette
+# FastFund palette
 NAVY = (85, 0, 85)
 PURPLE = (107, 23, 102)
 ACCENT = (186, 42, 132)
@@ -98,13 +98,13 @@ def _slide():
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, SLIDE_W, 12], fill=ACCENT)          # top accent
     d.rectangle([0, SLIDE_H - 48, SLIDE_W, SLIDE_H], fill=NAVY)  # footer
-    d.text((40, SLIDE_H - 38), "SFO Hub — Agentic Architecture", font=_font(18), fill=WHITE)
+    d.text((40, SLIDE_H - 38), "FastFund — Agentic Architecture", font=_font(18), fill=WHITE)
     return img, d
 
 
 def title_slide():
     img, d = _slide()
-    d.text((80, 320), "SFO Hub", font=_font(96, True), fill=NAVY)
+    d.text((80, 320), "FastFund", font=_font(96, True), fill=NAVY)
     d.text((84, 430), "Agentic Architecture", font=_font(54, True), fill=ACCENT)
     d.text((86, 520), "AI advisor for cross-selling & upselling to single family offices",
            font=_font(28), fill=INK)
@@ -119,7 +119,7 @@ def agents_slide():
     agents = [
         ("profile_agent", "Ground in who the client is — AUM, mix, services, pains"),
         ("needs_agent", "Detect gaps from a described setup → service categories"),
-        ("services_agent", "Explain the JTC services for a topic"),
+        ("services_agent", "Explain the FastFund services for a topic"),
         ("recommend_agent", "Ranked cross/upsell with rationale + estimated value"),
         ("benchmark_agent", "Aggregate industry benchmarks to frame advice"),
         ("data_agent", "Quantitative book-wide questions via text-to-SQL"),

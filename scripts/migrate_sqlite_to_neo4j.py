@@ -13,7 +13,7 @@ clean rebuild).
 Usage:
     python3.12 migrate_sqlite_to_neo4j.py            # incremental backfill
     python3.12 migrate_sqlite_to_neo4j.py --wipe     # clear graph, full rebuild
-    DB_URL=sqlite:///taxhub.db python3.12 migrate_sqlite_to_neo4j.py
+    DB_URL=sqlite:///fastfund.db python3.12 migrate_sqlite_to_neo4j.py
 """
 
 from __future__ import annotations

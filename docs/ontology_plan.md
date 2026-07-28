@@ -1,4 +1,4 @@
-# TaxHub — "Ontology" View Plan
+# FastFund — "Ontology" View Plan
 
 > **Decision (2026-06):** This splits into two surfaces.
 > - **Document Hierarchy** — a *tree* (Jurisdiction ▸ Category ▸ Form type ▸ Form),
@@ -48,7 +48,7 @@ jurisdiction (or all): each `Jurisdiction` → its `Form`s → the `Document`
 to law" story, drawn.
 
 A toggle (Schema ⇄ Data) and a jurisdiction filter sit above the canvas. Node
-colour = label (JTC palette); node size = degree. Clicking a `Form`/`Document`
+colour = label (FastFund palette); node size = degree. Clicking a `Form`/`Document`
 node opens it in the right-hand PDF/detail pane (reusing `/form/{id}` and
 `/document/{id}`), so the graph becomes a navigation surface, not just a picture.
 
@@ -99,8 +99,8 @@ the form shows a dangling "law" node (the URL) we can later promote to a real
   sibling). New route `@rt("/ontology")` → `Page(...)` with a full-height canvas
   `<div id="net">`, the Schema/Data toggle, and a jurisdiction `<select>`.
 - Load vis-network from CDN; fetch `/api/ontology?mode=schema|data&jur=XX`
-  (returns the JSON payload) and render. Node groups styled with the JTC palette
-  (Jurisdiction = purple `#6B1766`, Form = magenta `#BA2A84`, Document = slate,
+  (returns the JSON payload) and render. Node groups styled with the FastFund palette
+  (Jurisdiction = purple `#102a43`, Form = magenta `#0f766e`, Document = slate,
   Version/Change/Chunk = lighter tints).
 - Node-click handler: if `group==form` → load `/form/{id}` in the right pane; if
   `document` → `/document/{id}`; jurisdiction → filter to that jurisdiction.

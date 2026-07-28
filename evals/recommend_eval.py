@@ -2,8 +2,8 @@
 
 Scores the deterministic rule engine (``engine.rules.fire`` + the cross-sell
 graph) against a ground-truth set in ``evals/cases.yaml`` — the set of services a
-JTC relationship manager would expect for each profile. Reports per-case hits and
-aggregate precision / recall / hit-rate, the SFO-domain analogue of TaxHub's
+FastFund relationship manager would expect for each profile. Reports per-case hits and
+aggregate precision / recall / hit-rate, the SFO-domain analogue of FastFund's
 retriever eval.
 
 Usage:

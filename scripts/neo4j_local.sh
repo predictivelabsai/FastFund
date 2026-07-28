@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Self-contained, user-owned Neo4j for TaxHub local dev.
+# Self-contained, user-owned Neo4j for FastFund local dev.
 #
 # Uses the system-installed Neo4j binaries (/usr/bin/neo4j) but runs them as the
 # current user against a private home directory — no sudo, no touching the
@@ -16,10 +16,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-export NEO4J_HOME="${TAXHUB_NEO4J_HOME:-$HOME/.taxhub-neo4j}"
+export NEO4J_HOME="${FASTFUND_NEO4J_HOME:-$HOME/.fastfund-neo4j}"
 export NEO4J_CONF="$NEO4J_HOME/conf"
-NEO4J_PASSWORD="${NEO4J_PASSWORD:-taxhub-dev-password}"
-SRC_CONF="${TAXHUB_NEO4J_SRC_CONF:-/etc/neo4j/neo4j.conf}"
+NEO4J_PASSWORD="${NEO4J_PASSWORD:-fastfund-dev-password}"
+SRC_CONF="${FASTFUND_NEO4J_SRC_CONF:-/etc/neo4j/neo4j.conf}"
 
 setup() {
   mkdir -p "$NEO4J_HOME"/{data,logs,run,import,plugins,conf,certificates}
@@ -35,7 +35,7 @@ setup() {
     "$SRC_CONF" > "$NEO4J_CONF/neo4j.conf"
   cat >> "$NEO4J_CONF/neo4j.conf" <<EOF
 
-# ── TaxHub local overrides ──────────────────────────────────────────────────
+# ── FastFund local overrides ──────────────────────────────────────────────────
 dbms.connector.bolt.listen_address=:7687
 dbms.connector.http.listen_address=:7474
 dbms.memory.heap.initial_size=512m

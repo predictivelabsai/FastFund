@@ -1,9 +1,9 @@
-"""Text-to-SQL engine for SFO Hub analytics questions.
+"""Text-to-SQL engine for FastFund analytics questions.
 
 Takes a natural-language question, generates a single read-only SQL SELECT via the
 LLM against the SQLite schema, executes it, and returns a formatted answer. Mirrors
 the approach in the sister `ai-marketing` repo (utils/crm_query.ask_crm), but for
-SFO Hub's relational store (no Cypher — the live backend is SQLite/Postgres).
+FastFund's relational store (no Cypher — the live backend is SQLite/Postgres).
 
 Used both by the eval harness (`evals/run_evals.py`) and as the advisor's
 `data_agent` tool for quantitative questions.
@@ -17,10 +17,10 @@ from sqlalchemy import create_engine, text
 
 from rag import llm
 
-DB_URL = os.environ.get("DB_URL", "sqlite:///sfohub.db")
+DB_URL = os.environ.get("DB_URL", "sqlite:///fastfund.db")
 
 SCHEMA_DESCRIPTION = """
-You have access to these SQLite tables for a JTC Private Office cross/upsell CRM.
+You have access to these SQLite tables for a FastFund Family Office cross/upsell CRM.
 
 ## sfos  — single family office (SFO) client profiles
 Columns: id, client_ref, name, family_name, aum_usd (REAL, assets under management
@@ -30,7 +30,7 @@ current_services (JSON array of service keys, TEXT), asset_mix (JSON object of
 {asset_class: percent}, TEXT), pain_points (JSON array, TEXT),
 stage ('lead' | 'onboarding' | 'client'), contact_name, contact_email, created_at
 
-## services  — the JTC service catalogue
+## services  — the FastFund service catalogue
 Columns: id, key (e.g. trusts, tax_reporting, fund_admin, luxury_assets,
 real_estate_admin, edge, governance, nextgen_education, banking_treasury,
 compliance, private_office), name, category (structuring | fund | luxury |
@@ -165,7 +165,7 @@ def generate_sql(question: str) -> str | None:
 
 
 def ask_data(question: str, return_sql: bool = False):
-    """Answer a quantitative question over the SFO Hub DB via text-to-SQL.
+    """Answer a quantitative question over the FastFund DB via text-to-SQL.
 
     Returns the formatted answer string, or (answer, sql) when return_sql=True.
     Degrades to a clear message if AI is off or the SQL is unsafe/invalid.

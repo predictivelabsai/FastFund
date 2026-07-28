@@ -1,4 +1,4 @@
-"""TaxHub — 3-pane agentic web app.
+"""FastFund — 3-pane agentic web app.
 
 Left: nav + Tax Forms Tree + Shortcuts. Center: AI Assistant (SSE chat over the
 LangGraph orchestrator) with suggestion cards. Right: changes newsfeed, which
@@ -27,7 +27,7 @@ from agents.tools import document_agent, law_agent, metadata_agent, changes_agen
 from ingest.forms import forms_tree
 
 store.init_db()
-LOGIN_REQUIRED = os.environ.get("TAXHUB_PUBLIC", "0") != "1"
+LOGIN_REQUIRED = os.environ.get("FASTFUND_PUBLIC", "0") != "1"
 
 CATEGORY_LABELS = {
     "corporate_tax": "Corporate tax", "economic_substance": "Economic substance",
@@ -39,7 +39,7 @@ JUR_NAMES = {
     # Live MVP domiciles
     "JE": "Jersey", "GG": "Guernsey", "LU": "Luxembourg", "IE": "Ireland",
     "KY": "Cayman Islands", "VG": "British Virgin Islands",
-    # Expansion — all JTC Group office jurisdictions
+    # Expansion — all FastFund office jurisdictions
     "IM": "Isle of Man", "MU": "Mauritius", "MT": "Malta", "CY": "Cyprus",
     "NL": "Netherlands", "CH": "Switzerland", "GB": "United Kingdom", "DE": "Germany",
     "AT": "Austria", "PL": "Poland", "US": "United States", "HK": "Hong Kong",
@@ -57,7 +57,7 @@ OB_STATUS_LABELS = {"not_started": "Not started", "in_progress": "In progress",
                     "prepared": "Prepared", "filed": "Filed", "confirmed": "Confirmed",
                     "na": "N/A"}
 OB_STATUS_COLOR = {"not_started": "#7a7a85", "in_progress": "#b06b00",
-                   "prepared": "#6b1766", "filed": "#1c7c44", "confirmed": "#1c7c44",
+                   "prepared": "#102a43", "filed": "#1c7c44", "confirmed": "#1c7c44",
                    "na": "#9a93a6"}
 
 
@@ -73,22 +73,22 @@ ACTIVITY_OPTIONS = ["fund management", "holding", "finance & leasing",
 SAMPLE_ENTITIES = [
     {"name": "Aurora Global Fund SPC", "type": "fund", "domicile": "KY",
      "jurisdictions": ["KY", "US"], "fy_end": "31 December",
-     "activities": ["fund management", "holding"], "client_ref": "JTC-0001"},
+     "activities": ["fund management", "holding"], "client_ref": "FF-0001"},
     {"name": "Helios Holdings (Jersey) Ltd", "type": "holdco", "domicile": "JE",
      "jurisdictions": ["JE"], "fy_end": "31 December",
-     "activities": ["holding"], "client_ref": "JTC-0002"},
+     "activities": ["holding"], "client_ref": "FF-0002"},
     {"name": "Lumen Private Equity GP Sàrl", "type": "gp", "domicile": "LU",
      "jurisdictions": ["LU"], "fy_end": "31 December",
-     "activities": ["fund management"], "client_ref": "JTC-0003"},
+     "activities": ["fund management"], "client_ref": "FF-0003"},
     {"name": "Meridian Trust", "type": "trust", "domicile": "GG",
      "jurisdictions": ["GG"], "fy_end": "30 June",
-     "activities": ["holding"], "client_ref": "JTC-0004"},
+     "activities": ["holding"], "client_ref": "FF-0004"},
     {"name": "Atlas Infrastructure SCSp", "type": "fund", "domicile": "LU",
      "jurisdictions": ["LU", "IE"], "fy_end": "31 December",
-     "activities": ["fund management", "finance & leasing"], "client_ref": "JTC-0005"},
+     "activities": ["fund management", "finance & leasing"], "client_ref": "FF-0005"},
     {"name": "Pioneer Ventures (Cayman) Ltd", "type": "spv", "domicile": "KY",
      "jurisdictions": ["KY"], "fy_end": "31 December",
-     "activities": ["holding"], "client_ref": "JTC-0006"},
+     "activities": ["holding"], "client_ref": "FF-0006"},
 ]
 
 SUGGESTIONS = [
@@ -107,9 +107,9 @@ SHORTCUTS = [
 ]
 
 CSS = Style("""
-/* JTC Group brand palette (jtcgroup.com): purple #6B1766 / deep #550055 /
-   magenta accent #BA2A84 / slate text #48484F / light bg #F5F6F4 */
-:root{--navy:#6b1766;--navy2:#550055;--accent:#ba2a84;--bg:#f5f6f4;--line:#e6e3ec;
+/* FastFund brand palette (fastfund.org): purple #102a43 / deep #0b1f33 /
+   magenta accent #0f766e / slate text #48484F / light bg #F5F6F4 */
+:root{--navy:#102a43;--navy2:#0b1f33;--accent:#0f766e;--bg:#f5f6f4;--line:#e6e3ec;
 --green:#1c7c44;--amber:#b06b00;--text:#48484f;--muted:#7a7a85;--panel:#fff;}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
@@ -118,25 +118,25 @@ a{color:var(--navy2);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:grid;grid-template-columns:280px 1fr 430px;height:100vh;overflow:hidden}
 .pane{height:100vh;overflow-y:auto}
 .left{background:var(--navy);color:#ece3ee;padding:0}
-.left .brand{font-weight:700;font-size:18px;color:#fff;padding:16px 18px;border-bottom:1px solid #45114a}
+.left .brand{font-weight:700;font-size:18px;color:#fff;padding:16px 18px;border-bottom:1px solid #183b56}
 .left .brand span{color:var(--accent)}
 .left a{color:#ece3ee;display:block}
-.section{padding:12px 16px;border-bottom:1px solid #45114a}
-.section .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#c9a3c6;margin-bottom:8px}
-.navlink{padding:6px 8px;border-radius:6px;font-size:14px}.navlink:hover{background:#7a2474;text-decoration:none}
+.section{padding:12px 16px;border-bottom:1px solid #183b56}
+.section .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#a8c5c2;margin-bottom:8px}
+.navlink{padding:6px 8px;border-radius:6px;font-size:14px}.navlink:hover{background:#145f59;text-decoration:none}
 .newchat{display:block;background:var(--accent);color:#fff;text-align:center;font-weight:600;
 padding:9px;border-radius:8px;margin:12px 16px}
 .newchat:hover{text-decoration:none;filter:brightness(1.05)}
 details.tree{margin:2px 0}details.tree>summary{cursor:pointer;font-size:13px;padding:3px 0;list-style:none}
 details.tree>summary::-webkit-details-marker{display:none}
-details.tree>summary:before{content:"▸ ";color:#c9a3c6}details.tree[open]>summary:before{content:"▾ "}
+details.tree>summary:before{content:"▸ ";color:#a8c5c2}details.tree[open]>summary:before{content:"▾ "}
 .tree .jur{font-weight:600;color:#f3e9f3}.tree .cat{margin-left:12px;color:#d8c5d6}
-.tree .typ{margin-left:24px;color:#c9a3c6;font-size:12px}
+.tree .typ{margin-left:24px;color:#a8c5c2;font-size:12px}
 .formlink{margin-left:30px;display:block;font-size:12.5px;color:#ece3ee;padding:2px 0;cursor:pointer}
 .formlink:hover{color:#fff}
 .shortcut{font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer}
-.shortcut:hover{background:#7a2474}.shortcut b{color:var(--accent);font-family:ui-monospace,monospace}
-.sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#ece3ee}.sess:hover{background:#7a2474}
+.shortcut:hover{background:#145f59}.shortcut b{color:var(--accent);font-family:ui-monospace,monospace}
+.sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#ece3ee}.sess:hover{background:#145f59}
 /* center */
 .center{display:flex;flex-direction:column;background:#fbfcfd}
 /* centerdoc: scrollable document content (Navigate pages), not a chat column */
@@ -236,9 +236,9 @@ FAVICON = Link(rel="icon", type="image/svg+xml", href="/static/favicon.svg")
 PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
 VISNET = Script(src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js")
 
-# Colours for the Document Hierarchy tree (JTC palette).
-_HIER_LEAF = {"downloadable": "#ba2a84", "online": "#6b1766", "reference": "#8a7d92"}
-_HIER_BRANCH = {"jur": "#550055", "cat": "#9c5797", "typ": "#c9a3c6"}
+# Colours for the Document Hierarchy tree (FastFund palette).
+_HIER_LEAF = {"downloadable": "#0f766e", "online": "#102a43", "reference": "#8a7d92"}
+_HIER_BRANCH = {"jur": "#0b1f33", "cat": "#3c8d87", "typ": "#a8c5c2"}
 
 
 def current_user(sess):
@@ -267,7 +267,7 @@ def admin_only(sess):
     if LOGIN_REQUIRED and not is_admin(sess):
         return Page(sess, H1("Not authorised"),
                     P("This area is for administrators.", cls="muted"),
-                    title="Forbidden · TaxHub")
+                    title="Forbidden · FastFund")
     return None
 
 
@@ -319,15 +319,14 @@ def establish_session(sess, user_id, email):
     sess["team_name"] = teams[0]["name"] if teams else ""
 
 
-app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "taxhub-2026"),
+app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "fastfund-2026"),
                    pico=False)
 
 
 # ── Google OAuth (optional — enabled when client id + secret are set) ─────────
-# Mirrors the sister LiquidRound app: OIDC via Authlib, /auth/google →
-# Google consent → /auth/callback. The OAuth client lives in the "finespresso"
-# GCP project. If GOOGLE_ALLOWED_DOMAINS is set (comma-separated, e.g.
-# "jtcgroup.com"), only those email domains may sign in — existing accounts
+# OIDC via Authlib: /auth/google → Google consent → /auth/callback.
+# If GOOGLE_ALLOWED_DOMAINS is set (comma-separated, e.g.
+# "fastfund.org"), only those email domains may sign in — existing accounts
 # (e.g. the seeded admin) are always allowed. Unset ⇒ any Google account.
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -384,8 +383,8 @@ def health():
 
 @rt("/login", methods=["GET"])
 def login_form(sess, error: str = ""):
-    return Title("Sign in · TaxHub"), CSS, Form(
-        H2("TaxHub Demo"), P("Sign in", style="color:#6b7686"),
+    return Title("Sign in · FastFund"), CSS, Form(
+        H2("FastFund Demo"), P("Sign in", style="color:#6b7686"),
         (P(error, style="color:#c0392b") if error else ""),
         Input(name="email", placeholder="Email", type="email"),
         Div(
@@ -442,7 +441,7 @@ def logout(sess):
 
 
 def _role_pill(role):
-    col = "#6b1766" if role == "admin" else "#1c7c44" if role == "member" else "#7a7a85"
+    col = "#102a43" if role == "admin" else "#1c7c44" if role == "member" else "#7a7a85"
     return Span(role or "member", cls="rolepill",
                style=f"background:{col}22;color:{col}")
 
@@ -486,7 +485,7 @@ def profile(sess, saved: str = ""):
                 style="margin:6px 0"),
             Button("Save", cls="btn", style="margin-top:8px"),
             method="post", action="/profile"),
-        title="Profile · TaxHub")
+        title="Profile · FastFund")
 
 
 @rt("/profile", methods=["POST"])
@@ -541,7 +540,7 @@ def admin_users(sess):
         P(A("✉ Invite a new user", href="/admin/invite", cls="btn")),
         Table(Tr(Th("Email"), Th("Name"), Th("Global role"), Th("Teams"), Th("Add to team")),
               *[urow(u) for u in users]),
-        title="Users · TaxHub")
+        title="Users · FastFund")
 
 
 @rt("/admin/users/role", methods=["POST"])
@@ -574,7 +573,7 @@ def admin_teams(sess, created: str = ""):
              Button("Create team", cls="btn", style="margin-left:6px"),
              method="post", action="/admin/teams/create", style="margin:12px 0"),
         Table(Tr(Th("Team"), Th("Members"), Th("Entities"), Th("Created")), *rows),
-        title="Teams · TaxHub")
+        title="Teams · FastFund")
 
 
 @rt("/admin/teams/create", methods=["POST"])
@@ -621,7 +620,7 @@ def admin_team_detail(sess, team_id: int):
         H2("Members"),
         Table(Tr(Th("Email"), Th("Name"), Th("Team role"), Th("")), *[mrow(m) for m in members]),
         H2("Add a member"), add,
-        title=f"{t['name']} · TaxHub")
+        title=f"{t['name']} · FastFund")
 
 
 @rt("/admin/teams/member", methods=["POST"])
@@ -700,7 +699,7 @@ def admin_invite(sess, sent: str = "", err: str = "", revoked: str = ""):
         H2("Recent invitations"),
         (Table(Tr(Th("Email"), Th("Role"), Th("Team"), Th("Status"), Th("Sent"), Th("")),
                *[irow(i) for i in recent]) if recent else P("None yet.", cls="muted")),
-        title="Invite · TaxHub")
+        title="Invite · FastFund")
 
 
 @rt("/admin/invite/revoke", methods=["POST"])
@@ -729,11 +728,11 @@ def admin_invite_send(sess, request, email: str = "", team_id: int = 0, role: st
     store.create_invite(email, team_id or None, role if role in ("admin", "member") else "member",
                         token, current_user(sess), expires)
     team = store.get_team(team_id) if team_id else None
-    team_name = team["name"] if team else "TaxHub"
+    team_name = team["name"] if team else "FastFund"
     invite_url = f"{_base_url(request)}/invite/{token}"
     res = mailer.send_email(
         to=email, tag="invite",
-        subject=f"You're invited to {team_name} on TaxHub",
+        subject=f"You're invited to {team_name} on FastFund",
         html_body=mailer.invite_email_html(invite_url=invite_url, team_name=team_name,
                                            inviter=user_email(sess), role=role),
         text_body=mailer.invite_email_text(invite_url=invite_url, team_name=team_name,
@@ -760,13 +759,13 @@ def invite_accept(sess, token: str, err: str = ""):
         except Exception:  # noqa: BLE001
             pass
     if msg:
-        return (Title("Invitation · TaxHub"), CSS,
-                Div(H2("TaxHub"), P(msg, style="color:#c0392b"),
+        return (Title("Invitation · FastFund"), CSS,
+                Div(H2("FastFund"), P(msg, style="color:#c0392b"),
                     P(A("Go to sign in →", href="/login")), cls="form"))
     team = store.get_team(inv["team_id"]) if inv.get("team_id") else None
-    team_name = team["name"] if team else "TaxHub"
-    return (Title("Accept invitation · TaxHub"), CSS, Form(
-        H2("TaxHub"),
+    team_name = team["name"] if team else "FastFund"
+    return (Title("Accept invitation · FastFund"), CSS, Form(
+        H2("FastFund"),
         P(f"Join {team_name}", style="color:#6b7686"),
         (P(err, style="color:#c0392b") if err else ""),
         P(f"Invited as {inv['email']} ({inv.get('role')})",
@@ -847,7 +846,7 @@ def admin_analytics(sess, scope: str = "team", judged: str = ""):
         A("All teams", href="/admin/analytics?scope=all",
           cls="btn" if scope == "all" else ""),
         Form(Button("⚖ Run LLM judge on new turns", cls="btn",
-                    style="background:#6b1766;margin-left:10px"),
+                    style="background:#102a43;margin-left:10px"),
              method="post", action=f"/admin/judge-run?scope={scope}", style="display:inline"),
         style="margin:8px 0")
     return Page(sess,
@@ -861,7 +860,7 @@ def admin_analytics(sess, scope: str = "team", judged: str = ""):
         (Table(Tr(Th("Question"), Th("Answer"), Th("Vote"), Th("Judge"), Th("Why"), Th("User")),
                *[trow(t) for t in turns]) if turns
          else P("No chat turns logged yet.", cls="muted")),
-        title="Chat analytics · TaxHub")
+        title="Chat analytics · FastFund")
 
 
 @rt("/admin/judge-run", methods=["POST"])
@@ -895,7 +894,7 @@ def admin_events(sess, scope: str = "team"):
               cls="btn" if scope == "all" else ""), style="margin:8px 0"),
         (Table(Tr(Th("When (UTC)"), Th("Event"), Th("User"), Th("Detail")), *rows)
          if rows else P("No events yet.", cls="muted")),
-        title="Audit log · TaxHub")
+        title="Audit log · FastFund")
 
 
 # ── Google OAuth: redirect to Google, then handle the callback ────────────────
@@ -951,7 +950,7 @@ def _admin_ok(sess, request) -> bool:
     if require(sess) is None:
         return True
     tok = request.headers.get("x-admin-token", "") if request is not None else ""
-    return bool(tok) and tok == os.environ.get("APP_SECRET", "taxhub-2026")
+    return bool(tok) and tok == os.environ.get("APP_SECRET", "fastfund-2026")
 
 
 def _run_refresh(jurisdiction):
@@ -1058,36 +1057,40 @@ def left_pane(sess):
     if can_invite(sess):
         admin_links.insert(0, A("✉ Invite a user", href="/admin/invite", cls="navlink"))
     return Div(
-        Div("JTC ", Span("TaxHub"), cls="brand"),
+        Div("Fast", Span("Fund"), cls="brand"),
         team_switcher(sess),
         A("+ New chat", href="/", cls="newchat"),
         Div(Div("Recent chats", cls="lbl"),
             *[A(s.get("title") or "Chat", href=f"/?sid={s['id']}", cls="sess")
               for s in sessions] or [Div("No chats yet", cls="muted", style="font-size:12px")],
             cls="section"),
-        Div(Div("Navigate", cls="lbl"),
-            A("Dashboard", href="/dashboard", cls="navlink"),
-            A("Entities", href="/entities", cls="navlink"),
-            A("Obligations", href="/obligations", cls="navlink"),
-            A("📅 Calendar", href="/calendar", cls="navlink"),
-            A("🗺 Coverage", href="/coverage", cls="navlink"),
-            A("🌐 AEOI / FATCA-CRS", href="/aeoi", cls="navlink"),
-            A("Jurisdictions", href="/jurisdictions", cls="navlink"),
-            A("Documents", href="/documents", cls="navlink"),
-            A("Changes", href="/changes", cls="navlink"),
+        Div(Div("Family Office", cls="lbl"),
+            A("🏠 Family advisor", href="/family/", cls="navlink"),
+            A("👪 Families", href="/family/clients", cls="navlink"),
+            A("🎯 Outreach pipeline", href="/family/opportunities", cls="navlink"),
+            A("🗓 Relationship calendar", href="/family/calendar", cls="navlink"),
+            A("🗂 Service catalogue", href="/family/services", cls="navlink"),
             cls="section"),
-        Div(Div("Tax Forms Tree", cls="lbl"), tree_component(), cls="section"),
-        Div(Div("Shortcuts", cls="lbl"),
-            *[Div(B(p), " ", desc, cls="shortcut", onclick=f"fillChat({ex!r})")
-              for p, desc, ex in SHORTCUTS],
+        Div(Div("Tax & Compliance", cls="lbl"),
+            A("📊 Dashboard", href="/dashboard", cls="navlink"),
+            A("🏢 Legal entities", href="/entities", cls="navlink"),
+            A("✅ Obligations", href="/obligations", cls="navlink"),
+            A("📅 Filing calendar", href="/calendar", cls="navlink"),
+            A("🌐 AEOI / FATCA-CRS", href="/aeoi", cls="navlink"),
+            cls="section"),
+        Div(Div("Knowledge & Insights", cls="lbl"),
+            A("🌍 Jurisdictions", href="/jurisdictions", cls="navlink"),
+            A("📚 Forms & documents", href="/documents", cls="navlink"),
+            A("📰 Regulatory changes", href="/changes", cls="navlink"),
+            A("🗺 Filing coverage", href="/coverage", cls="navlink"),
+            A("🧮 Service coverage", href="/family/coverage", cls="navlink"),
+            A("🕸 Relationship graph", href="/family/graph", cls="navlink"),
             cls="section"),
         Div(Div("Account", cls="lbl"),
             A("👤 My profile", href="/profile", cls="navlink"),
             *admin_links,
-            A("📘 User Guide", href="/help", cls="navlink"),
+            A("📘 FastFund guide", href="/user-guide", cls="navlink"),
             A("🛠 Technical Guide", href="/technical-guide", cls="navlink"),
-            A("🌳 Document Hierarchy", href="/document-hierarchy", cls="navlink"),
-            A("🕸 Ontology", href="/ontology", cls="navlink"),
             A("Sign out", href="/logout", cls="navlink"),
             cls="section"),
         cls="pane left")
@@ -1111,7 +1114,7 @@ def center_pane(messages, ratings=None):
     ratings = ratings or {}
     msg_divs = [bubble(m["role"], m["content"], m.get("id"), ratings.get(m.get("id")))
                 for m in messages] or [
-        Div(Div("TaxHub Assistant", style="font-weight:600;margin-bottom:4px"),
+        Div(Div("FastFund Assistant", style="font-weight:600;margin-bottom:4px"),
             "Ask me which tax form to file, or a tax-law question. I'll route to the "
             "right specialist agent and cite my sources.", cls="bubble assistant")]
     return Div(
@@ -1252,7 +1255,7 @@ def home(sess, sid: int = 0):
     messages = store.get_chat_messages(sid) if sid else []
     ratings = store.feedback_for_messages([m["id"] for m in messages if m.get("id")]) \
         if messages else {}
-    return (Title("TaxHub Assistant"), CSS,
+    return (Title("FastFund Assistant"), CSS,
             Div(left_pane(sess), center_pane(messages, ratings), right_pane(), cls="app"), JS)
 
 
@@ -1551,7 +1554,7 @@ async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
 # ── Secondary pages: same 3-pane shell as the Assistant ──────────────────────
 # left = nav, center = the page content, right = the Copilot (in place of the
 # changes feed). Pass sess so the left pane can show recent chats + sign-out.
-def Page(sess, *content, title="TaxHub", with_copilot=True, ctx="default"):
+def Page(sess, *content, title="FastFund", with_copilot=True, ctx="default"):
     center = Div(Div(*content, cls="wrap"), cls="pane center centerdoc")
     right = copilot(ctx) if with_copilot else Div(cls="pane right")
     return (Title(title), CSS,
@@ -1620,7 +1623,7 @@ def dashboard(sess):
         Table(Tr(Th("Code"), Th("Documents")),
               *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
                 for j in jurs]),
-        title="Dashboard · TaxHub", ctx="dashboard")
+        title="Dashboard · FastFund", ctx="dashboard")
 
 
 @rt("/jurisdictions")
@@ -1644,7 +1647,7 @@ def jurisdiction(sess, code: str):
         Table(Tr(Th("Document"), Th("Type"), Th("Versions"), Th("Status")),
               *[Tr(Td(A(d["title"], href=f"/document/{d['id']}")), Td(d.get("doc_type", "")),
                    Td(str(d.get("versions", 0))), Td(d.get("status", ""))) for d in docs]),
-        title=f"{code} · TaxHub", ctx="jurisdictions")
+        title=f"{code} · FastFund", ctx="jurisdictions")
 
 
 @rt("/document/{doc_id}")
@@ -1671,7 +1674,7 @@ def document(sess, doc_id: int, embed: int = 0):
             or [Li("None", cls="muted")]))
     if embed:
         return (CSS, Div(body, cls="wrap"))
-    return Page(sess, body, title=f"{d['title'][:40]} · TaxHub", ctx="documents")
+    return Page(sess, body, title=f"{d['title'][:40]} · FastFund", ctx="documents")
 
 
 # ── Document Hierarchy (Plotly tree: Jurisdiction ▸ Category ▸ Form type ▸ Form) ──
@@ -1708,7 +1711,7 @@ def _hierarchy_payload(jur: str | None = None) -> dict:
 
 
 _HBTN = ("padding:5px 12px;border:1px solid var(--navy);border-radius:6px;"
-         "background:#fff;color:#6b1766;cursor:pointer;font-size:13px")
+         "background:#fff;color:#102a43;cursor:pointer;font-size:13px")
 _HLEGEND = [("downloadable", "📄 Downloadable"), ("online", "🌐 Online"),
             ("reference", "📘 Reference")]
 
@@ -1761,24 +1764,24 @@ function drawPlot(){
   if(!el._wired){el.on('plotly_click',function(e){var p=e.points&&e.points[0];
     if(p&&p.customdata){openForm(p.customdata);}});el._wired=true;}
   ['icicle','treemap','sunburst'].forEach(function(x){var b=document.getElementById('bt_'+x);
-    if(b){b.style.background=(x===HTYPE)?'#6b1766':'#fff';b.style.color=(x===HTYPE)?'#fff':'#6b1766';}});
+    if(b){b.style.background=(x===HTYPE)?'#102a43':'#fff';b.style.color=(x===HTYPE)?'#fff':'#102a43';}});
 }
 function setType(x){HTYPE=x;drawPlot();}
 window.addEventListener('resize',function(){if(window.Plotly)Plotly.Plots.resize('plot');});
 drawPlot();
 """)
-    return (Title("Document Hierarchy · TaxHub"), CSS,
+    return (Title("Document Hierarchy · FastFund"), CSS,
             Div(left_pane(sess), center, right, cls="app"),
             PLOTLY, JS, data_script, plot_js)
 
 
 # ── Ontology (Help): provenance/network graph + schema meta-graph ─────────────
-_ONTO_GROUPS = {  # vis-network group styling (JTC palette)
-    "jurisdiction": {"color": "#550055", "shape": "dot"},
+_ONTO_GROUPS = {  # vis-network group styling (FastFund palette)
+    "jurisdiction": {"color": "#0b1f33", "shape": "dot"},
     "legislation": {"color": "#48484f", "shape": "diamond"},
-    "document": {"color": "#9c5797", "shape": "square"},
-    "form_downloadable": {"color": "#ba2a84", "shape": "dot"},
-    "form_online": {"color": "#6b1766", "shape": "dot"},
+    "document": {"color": "#3c8d87", "shape": "square"},
+    "form_downloadable": {"color": "#0f766e", "shape": "dot"},
+    "form_online": {"color": "#102a43", "shape": "dot"},
     "form_reference": {"color": "#8a7d92", "shape": "dot"},
 }
 
@@ -1797,10 +1800,10 @@ def ontology(sess, mode: str = "instance", jur: str = ""):
     def mbtn(m, lbl):
         on = (m == mode)
         return A(lbl, href=f"/ontology?mode={m}" + (f"&jur={jur}" if jur and m == "instance" else ""),
-                 style=_HBTN + (";background:#6b1766;color:#fff" if on else ""))
+                 style=_HBTN + (";background:#102a43;color:#fff" if on else ""))
     legend = Span(
-        Span("● ", style="color:#550055"), "Jurisdiction  ",
-        Span("● ", style="color:#ba2a84"), "Form  ",
+        Span("● ", style="color:#0b1f33"), "Jurisdiction  ",
+        Span("● ", style="color:#0f766e"), "Form  ",
         Span("◆ ", style="color:#48484f"), "Legislation",
         style="color:var(--muted);font-size:12px;margin-left:8px")
     controls = Div(
@@ -1838,7 +1841,7 @@ var groups={};Object.keys(window.GGROUPS).forEach(function(k){var g=window.GGROU
 var net=new vis.Network(document.getElementById('net'),{nodes:nodes,edges:edges},{
   groups:groups,
   nodes:{borderWidth:1,scaling:{min:8,max:48},font:{size:13}},
-  edges:{color:{color:'#cdbcd0'},arrows:{to:{scaleFactor:0.5}},
+  edges:{color:{color:'#b4cfca'},arrows:{to:{scaleFactor:0.5}},
     font:{size:9,color:'#9a93a6',align:'middle'},smooth:{type:'dynamic'}},
   physics:{stabilization:{iterations:160},barnesHut:{springLength:130,avoidOverlap:0.2}},
   interaction:{hover:true,tooltipDelay:120}});
@@ -1846,14 +1849,14 @@ net.on('click',function(p){if(!p.nodes.length)return;var n=nodes.get(p.nodes[0])
   if(n.formid){openForm(n.formid);}
   else if(n.url){window.open(n.url,'_blank');}});
 """)
-    return (Title("Ontology · TaxHub"), CSS,
+    return (Title("Ontology · FastFund"), CSS,
             Div(left_pane(sess), center, right, cls="app"),
             VISNET, JS, data_script, net_js)
 
 
 # ── Entities (Phase 1: model + CRUD + CSV import) ─────────────────────────────
 def _jur_badges(codes):
-    return Span(*[Span(c, style="display:inline-block;background:#efeaf3;color:#6b1766;"
+    return Span(*[Span(c, style="display:inline-block;background:#e6f4f1;color:#102a43;"
                        "border-radius:5px;padding:1px 7px;margin:1px;font-size:11px")
                   for c in (codes or [])]) or Span("—", cls="muted")
 
@@ -1864,6 +1867,9 @@ def entities(sess, added: str = ""):
         return r
     tid = team_scope(sess)
     ents = store.list_entities(limit=1000, team_id=tid)
+    from family import sfostore as family_store
+    families = family_store.list_sfos(limit=1000)
+    family_by_id = {f["id"]: f for f in families}
     from collections import Counter
     all_obs = store.list_obligations(limit=10000, team_id=tid)
     n_by_ent = Counter(o["entity_id"] for o in all_obs)
@@ -1875,11 +1881,14 @@ def entities(sess, added: str = ""):
         if not n:
             return Span("—", cls="muted")
         return Span(f"{done_by_ent.get(eid, 0)}/{n} filed",
-                    style="display:inline-block;background:#efeaf3;color:#6b1766;"
+                    style="display:inline-block;background:#e6f4f1;color:#102a43;"
                           "border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600")
 
     rows = [Tr(Td(A(e["name"], href=f"/entity/{e['id']}")),
                Td(e.get("type") or "—"), Td(e.get("domicile") or "—"),
+               Td(A(family_by_id[e["sfo_id"]]["name"],
+                    href=f"/family/sfo/{e['sfo_id']}")
+                  if e.get("sfo_id") in family_by_id else Span("—", cls="muted")),
                Td(_jur_badges(e.get("jurisdictions"))),
                Td(e.get("fy_end") or "—"), Td(ob_chip(e["id"])),
                Td(e.get("client_ref") or "—"))
@@ -1893,6 +1902,10 @@ def entities(sess, added: str = ""):
                    name="domicile", style="width:18%;margin-right:1%"),
             Input(name="client_ref", placeholder="Client ref", style="width:18%"),
             style="display:flex;gap:4px;margin:6px 0"),
+        Select(Option("No linked family office", value=""),
+               *[Option(f["name"], value=str(f["id"])) for f in families],
+               name="sfo_id", style="width:40%;margin:6px 0",
+               aria_label="Family office"),
         Div(Input(name="jurisdictions", placeholder="Jurisdictions (comma codes, e.g. KY,US)", style="width:40%"),
             Input(name="fy_end", placeholder="Financial year-end (e.g. 31 December)", style="width:30%;margin:0 1%"),
             Input(name="activities", placeholder="Activities (comma)", style="width:28%"),
@@ -1913,16 +1926,16 @@ def entities(sess, added: str = ""):
           "deadlines and filing status build on these in the next phases.", cls="muted"),
         add_form, import_form,
         H2("Portfolio"),
-        (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Jurisdictions"),
+        (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Family office"), Th("Jurisdictions"),
                   Th("FY end"), Th("Obligations"), Th("Client ref")), *rows) if rows
          else P("No entities yet — add one above or import a CSV.", cls="muted")),
-        title="Entities · TaxHub", ctx="entities")
+        title="Entities · FastFund", ctx="entities")
 
 
 @rt("/entity", methods=["POST"])
 def entity_create(sess, name: str = "", type: str = "company", domicile: str = "",
                   jurisdictions: str = "", fy_end: str = "", activities: str = "",
-                  client_ref: str = ""):
+                  client_ref: str = "", sfo_id: str = ""):
     if (require(sess)):
         return RedirectResponse("/login", status_code=303)
     if not name.strip():
@@ -1933,6 +1946,7 @@ def entity_create(sess, name: str = "", type: str = "company", domicile: str = "
         "fy_end": fy_end.strip() or None,
         "activities": [a.strip() for a in re.split(r"[,;|]", activities) if a.strip()],
         "client_ref": client_ref.strip() or None, "status": "active",
+        "sfo_id": int(sfo_id) if sfo_id.isdigit() else None,
         "team_id": active_team_id(sess)})
     return RedirectResponse("/entities?added=1", status_code=303)
 
@@ -1972,7 +1986,11 @@ def entity_view(sess, entity_id: int):
     if tid is not None and e.get("team_id") != tid:
         return Page(sess, H1("Entity not in your team"),
                     P("This entity belongs to a different team. Switch teams to view it.",
-                      cls="muted"), title="Not available · TaxHub")
+                      cls="muted"), title="Not available · FastFund")
+    family = None
+    if e.get("sfo_id"):
+        from family import sfostore as family_store
+        family = family_store.get_sfo(e["sfo_id"])
     from datetime import date
     today = date.today()
     obs = [monitor.annotate(o, e, today) for o in store.list_obligations(entity_id=entity_id)]
@@ -2017,6 +2035,9 @@ def entity_view(sess, entity_id: int):
         H1(e["name"]),
         Dl(Dt("Type"), Dd(e.get("type") or "—"),
            Dt("Domicile"), Dd(JUR_NAMES.get(e.get("domicile"), e.get("domicile") or "—")),
+           Dt("Family office"),
+           Dd(A(family["name"], href=f"/family/sfo/{family['id']}")
+              if family else "—"),
            Dt("Operating jurisdictions"), Dd(_jur_badges(e.get("jurisdictions"))),
            Dt("Financial year-end"), Dd(e.get("fy_end") or "—"),
            Dt("Activities"), Dd(", ".join(e.get("activities") or []) or "—"),
@@ -2027,7 +2048,7 @@ def entity_view(sess, entity_id: int):
         Form(Button("Delete entity", cls="btn",
                     style="background:#b0353a", onclick="return confirm('Delete this entity?')"),
              method="post", action=f"/entity/{entity_id}/delete", style="margin-top:18px"),
-        title=f"{e['name']} · TaxHub", ctx=("entity", e["name"]))
+        title=f"{e['name']} · FastFund", ctx=("entity", e["name"]))
 
 
 @rt("/entity/{entity_id}/determine", methods=["POST"])
@@ -2098,7 +2119,7 @@ def obligations_all(sess, status: str = "", jur: str = ""):
         (Table(Tr(Th("Entity"), Th("Jur"), Th("Obligation"), Th("Category"),
                   Th("Filing deadline"), Th("Status"), Th("Verified")), *rows)
          if rows else P("No obligations match.", cls="muted")),
-        title="Obligations · TaxHub", ctx="obligations")
+        title="Obligations · FastFund", ctx="obligations")
 
 
 def urgency_badge(urg):
@@ -2172,7 +2193,7 @@ def calendar_view(sess, urg: str = "", jur: str = ""):
         (Table(Tr(Th("Due"), Th("Urgency"), Th("Entity"), Th("Jur"), Th("Obligation"),
                   Th("Status"), Th("Rule")), *rows)
          if rows else P("No obligations match.", cls="muted")),
-        title="Calendar · TaxHub", ctx="calendar")
+        title="Calendar · FastFund", ctx="calendar")
 
 
 def aeoi_readiness_badge(readiness):
@@ -2294,7 +2315,7 @@ def aeoi_view(sess, readiness: str = ""):
         (Table(Tr(Th("Entity"), Th("Type"), Th("Domicile"), Th("CRS"), Th("FATCA"),
                   Th("Errors"), Th("Warnings"), Th("Readiness")), *rows_ui)
          if rows_ui else P("No entities match.", cls="muted")),
-        title="AEOI · TaxHub", ctx="aeoi")
+        title="AEOI · FastFund", ctx="aeoi")
 
 
 _W8_BADGE = {"ok": ("✓", "#1c7c44"), "error": ("⚠", "#c0392b"),
@@ -2332,7 +2353,7 @@ def w8_render(data):
             cls="w8title"),
         Div(Span("Status: "), Span(r["label"], id="w8readiness",
             style=f"font-weight:700;color:{r['color']}"),
-            Span("  — agent filling from TaxHub data…", id="w8note", cls="muted",
+            Span("  — agent filling from FastFund data…", id="w8note", cls="muted",
                  style="font-size:11px;margin-left:6px"),
             cls="w8status"),
         *sections,
@@ -2429,7 +2450,7 @@ function heat(id, d, opts){
     yaxis:{automargin:true,autorange:'reversed',fixedrange:true}},
     {responsive:true,displayModeBar:false});
 }
-var PUR=[[0,'#faf7fb'],[0.5,'#d3a9d0'],[1,'#6b1766']];
+var PUR=[[0,'#faf7fb'],[0.5,'#86bdb6'],[1,'#102a43']];
 var GRN=[[0,'#f5faf6'],[0.5,'#9fcfb0'],[1,'#1c7c44']];
 function drawCoverage(){
   if(!window.Plotly){return setTimeout(drawCoverage,60);}
@@ -2455,7 +2476,7 @@ window.addEventListener('resize',function(){if(window.Plotly){
           "breakdown (📄 downloadable · 🌐 online · 📘 reference).", cls="muted"),
         (Div(id="catcov") if cat["jurs"] else P("No forms yet.", cls="muted")),
         PLOTLY, data_script, plot_js,
-        title="Coverage · TaxHub", ctx="coverage")
+        title="Coverage · FastFund", ctx="coverage")
 
 
 @rt("/admin/digest")
@@ -2547,7 +2568,7 @@ function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCa
                   "search and filter below, or upload a new PDF (pushed to the server volume).",
                   cls="muted"),
                 upload, H2("Stored documents"), filterbar, browser, js,
-                title="Documents · TaxHub", ctx="documents")
+                title="Documents · FastFund", ctx="documents")
 
 
 @rt("/upload", methods=["POST"])
@@ -2595,11 +2616,13 @@ def help_page(sess):
                       *[Tr(Td(Code(p)), Td(desc)) for p, desc, _ in SHORTCUTS])
     return Page(sess, 
         H1("Help & User Guide"),
-        P("TaxHub helps a fund back office find the correct tax form to file, with "
-          "provenance back to the underlying law. Use the AI Assistant for free-text "
-          "questions, the Forms Tree to browse, or the shortcuts below.", cls="muted"),
-        P(A("📖 Open the User Guide (HTML slides)", href="/docs/taxhub_user_guide.html", target="_blank", cls="btn"), " ",
+        P("FastFund connects family-office outreach, legal-entity ownership and "
+          "multijurisdiction filing operations. Use the assistants for relationship "
+          "and tax questions, then follow the linked source and operational records.",
+          cls="muted"),
+        P(A("📖 Open the User Guide (HTML slides)", href="/user-guide", target="_blank", cls="btn"), " ",
           A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn"), " ",
+          A("⬇ PowerPoint", href="/user-guide-pptx", cls="btn"), " ",
           A("🛠 Technical Guide (architecture & Azure deployment)", href="/technical-guide", cls="btn")),
         H2("Filing types"),
         P("Every form is labelled by how it is filed:"),
@@ -2614,7 +2637,36 @@ def help_page(sess):
         P("Browse by Jurisdiction → category (corporate tax, economic substance, AEOI…) "
           "→ document type → form. Click any form to open its PDF (or the official portal "
           "link for online-filed forms) in the right pane."),
-        title="Help · TaxHub")
+        title="Help · FastFund")
+
+
+@rt("/user-guide")
+def user_guide_web(sess):
+    if (r := require(sess)):
+        return r
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "docs" / "fastfund_user_guide.html"
+    if not path.exists():
+        return Page(sess, H1("User guide not generated yet"),
+                    P("Run scripts/generate_fastfund_user_guide.py."))
+    body = path.read_text(encoding="utf-8").replace(
+        '.png"', '"'
+    ).replace(
+        'src="screenshots/fastfund-', 'src="/guide-assets/fastfund-'
+    )
+    return Response(body, media_type="text/html")
+
+
+@rt("/guide-assets/{name}")
+def user_guide_screenshot(sess, name: str):
+    if (r := require(sess)):
+        return r
+    from pathlib import Path
+    safe = Path(name).name
+    if not safe.startswith("fastfund-") or "." in safe:
+        return Response("Not found", status_code=404)
+    path = Path(__file__).resolve().parent.parent / "docs" / "screenshots" / f"{safe}.png"
+    return FileResponse(path) if path.exists() else Response("Not found", status_code=404)
 
 
 @rt("/user-guide-pdf")
@@ -2622,12 +2674,27 @@ def user_guide_pdf(sess):
     if (require(sess)):
         return RedirectResponse("/login", status_code=303)
     from pathlib import Path
-    p = Path(__file__).resolve().parent.parent / "docs" / "taxhub_user_guide.pdf"
+    p = Path(__file__).resolve().parent.parent / "docs" / "fastfund_user_guide.pdf"
     if not p.exists():
         return Page(sess, H1("User guide PDF not generated yet"),
-                    P("Run scripts/generate_user_guide.py.", cls="muted"))
+                    P("Run scripts/generate_fastfund_user_guide.py.", cls="muted"))
     return Response(p.read_bytes(), media_type="application/pdf",
-                    headers={"Content-Disposition": 'inline; filename="taxhub_user_guide.pdf"'})
+                    headers={"Content-Disposition": 'inline; filename="fastfund_user_guide.pdf"'})
+
+
+@rt("/user-guide-pptx")
+def user_guide_pptx(sess):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "docs" / "fastfund_user_guide.pptx"
+    if not p.exists():
+        return Page(sess, H1("User guide PowerPoint not generated yet"))
+    return FileResponse(
+        p,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        filename="fastfund_user_guide.pptx",
+    )
 
 
 def _technical_guide_html():
@@ -2647,7 +2714,7 @@ def technical_guide(sess):
         return Page(sess, H1("Technical Guide not generated yet"),
                     P("Run ", Code("python3.12 scripts/generate_architecture_html.py"),
                       " to build docs/architecture_readme.html.", cls="muted"),
-                    title="Technical Guide · TaxHub")
+                    title="Technical Guide · FastFund")
     body = html.split("<body>", 1)[1].rsplit("</body>", 1)[0] if "<body>" in html else html
     return Page(sess,
         Div(A("⬇ Open standalone HTML", href="/technical-guide.html", target="_blank", cls="btn"),
@@ -2662,7 +2729,7 @@ def technical_guide(sess):
               ".techguide .toc{background:#f5f6f4;border:1px solid var(--line);border-radius:8px;padding:8px 16px}"
               ".techguide .toc ul{list-style:none;padding-left:14px}"),
         Div(NotStr(body), cls="techguide"),
-        title="Technical Guide · TaxHub")
+        title="Technical Guide · FastFund")
 
 
 @rt("/technical-guide.html")
@@ -2691,3 +2758,10 @@ def changes_page(sess, j: str = None):
                if c.get("ai_summary") else ""), cls="feed-item")
           for c in chs],
         ctx="changes")
+
+
+# Family-office routes retain their complete domain implementation while sharing
+# FastFund's process, environment, database URL, session secret, and navigation.
+from family.web.app import app as family_app
+
+app.mount("/family", family_app)

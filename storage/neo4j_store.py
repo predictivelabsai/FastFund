@@ -106,13 +106,13 @@ class Neo4jStore(Storage):
     def _seed_admin(self) -> None:
         import bcrypt
 
-        email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
+        email = os.environ.get("ADMIN_EMAIL", "admin@fastfund.org")
         pw = os.environ.get("ADMIN_PASSWORD", "Funds2$2")
         with self._session() as s:
             exists = s.run("MATCH (u:User {email:$e}) RETURN u LIMIT 1", e=email).single()
             if not exists:
                 pw_hash = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
-                s.write_transaction(self._create_user, email, pw_hash, "JTC Admin", "admin")
+                s.write_transaction(self._create_user, email, pw_hash, "FastFund Admin", "admin")
 
     @classmethod
     def _create_user(cls, tx, email, pw_hash, name, role):
@@ -126,7 +126,7 @@ class Neo4jStore(Storage):
 
     # ── Teams / RBAC seeding ───────────────────────────────────────────────
     PLATFORM_ADMINS = ("julian@predictivelabs.co.uk", "kaljuvee@gmail.com")
-    DEFAULT_TEAM = "JTC Group"
+    DEFAULT_TEAM = "FastFund"
 
     def _seed_platform(self) -> None:
         """Default team, platform admins (global admin + team admin), backfill
@@ -790,12 +790,12 @@ class Neo4jStore(Storage):
 
     # ── Entities ───────────────────────────────────────────────────────────
     _ENTITY_PROPS = ("name", "type", "domicile", "jurisdictions", "fy_end",
-                     "activities", "client_ref", "status", "team_id")
+                     "activities", "client_ref", "status", "team_id", "sfo_id")
     _ENTITY_RETURN = (
         "e.uid AS id, e.name AS name, e.type AS type, e.domicile AS domicile, "
         "coalesce(e.jurisdictions,[]) AS jurisdictions, e.fy_end AS fy_end, "
         "coalesce(e.activities,[]) AS activities, e.client_ref AS client_ref, "
-        "e.status AS status, e.team_id AS team_id")
+        "e.status AS status, e.team_id AS team_id, e.sfo_id AS sfo_id")
 
     def upsert_entity(self, entity: dict) -> int:
         props = {k: entity[k] for k in self._ENTITY_PROPS if k in entity}
@@ -813,11 +813,19 @@ class Neo4jStore(Storage):
         if ex:
             tx.run("MATCH (e:Entity {uid:$uid}) SET e += $props, e.updated_at=$now",
                    uid=ex["uid"], props=props, now=now)
+            if props.get("sfo_id") is not None:
+                tx.run("MATCH (e:Entity {uid:$uid}), (f:SFO {uid:$sfo_id}) "
+                       "MERGE (f)-[:OWNS_ENTITY]->(e)",
+                       uid=ex["uid"], sfo_id=props["sfo_id"])
             return ex["uid"]
         uid = cls._next_id(tx, "Entity")
         props.setdefault("status", "active")
         tx.run("CREATE (e:Entity {uid:$uid, created_at:$now, updated_at:$now}) "
                "SET e += $props", uid=uid, props=props, now=now)
+        if props.get("sfo_id") is not None:
+            tx.run("MATCH (e:Entity {uid:$uid}), (f:SFO {uid:$sfo_id}) "
+                   "MERGE (f)-[:OWNS_ENTITY]->(e)",
+                   uid=uid, sfo_id=props["sfo_id"])
         for jc in (props.get("jurisdictions") or []):
             tx.run("MATCH (e:Entity {uid:$uid}) MERGE (j:Jurisdiction {code:$jc}) "
                    "MERGE (e)-[:IN_JURISDICTION]->(j)", uid=uid, jc=jc)

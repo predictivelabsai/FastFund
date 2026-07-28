@@ -15,7 +15,7 @@ from agents.tools import ALL_TOOLS
 
 SYSTEM = (
     f"Today's date is {date.today().isoformat()}. "
-    "You are TaxHub's orchestrator for a fund-management back office. Your PRIMARY "
+    "You are FastFund's orchestrator for a fund-management back office. Your PRIMARY "
     "job is to help the user find the CORRECT TAX FORM to file, and secondarily to "
     "answer tax-law questions with traceable sources.\n\n"
     "Route to your specialist tools:\n"

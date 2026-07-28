@@ -1,6 +1,6 @@
 """Specialist agents, exposed as tools the orchestrator can call.
 
-Each "agent" is a focused capability over the TaxHub graph. The orchestrator
+Each "agent" is a focused capability over the FastFund graph. The orchestrator
 (a LangGraph tool-calling agent) routes the user's request to the right one and
 composes the final answer. Tools return markdown the model can cite; the UI also
 parses ``[form:<id>]`` / ``[doc:<id>]`` markers to render open-in-viewer links.
@@ -112,7 +112,7 @@ def _resolve_entities(entity: str) -> list[dict]:
 def entity_agent(entity: str = "", category: str = "", status: str = "",
                  due_before: str = "", due_within_days: int = 0,
                  urgency: str = "") -> str:
-    """Answer questions about the FUND ENTITIES JTC administers and what they OWE —
+    """Answer questions about the FUND ENTITIES FastFund administers and what they OWE —
     their filing obligations, computed DUE DATES, file-status, and whether each is
     human-VERIFIED. Use for: "what does Aurora owe this year?", "which entities have
     economic-substance due before 30 September?", "show overdue filings", "is the
@@ -247,7 +247,7 @@ def aeoi_agent(entity: str = "", readiness: str = "") -> str:
 @tool
 def w8_fill(entity: str) -> str:
     """Complete a US **W-8BEN-E** (Certificate of Foreign Status, entity form) for an
-    administered entity, drawing every value from TaxHub's record + AEOI profile.
+    administered entity, drawing every value from FastFund's record + AEOI profile.
     Use when the user asks to "fill / prepare / complete the W-8 (or W-8BEN-E) for
     <entity>" or "show the W-8 for <entity>". The form opens in the right-hand pane
     and fills in live for the user to review, edit and sign off.
@@ -266,7 +266,7 @@ def w8_fill(entity: str) -> str:
         if named:
             e = named[0]
     return (f"Preparing the **W-8BEN-E** for **[{e['name']}](/entity/{e['id']})** from its "
-            f"TaxHub profile (identity, FATCA classification, GIIN, treaty position and "
+            f"FastFund profile (identity, FATCA classification, GIIN, treaty position and "
             f"self-certification). It will fill in on the right for you to review and sign "
             f"off. [w8:{e['id']}]")
 

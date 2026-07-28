@@ -155,7 +155,7 @@ jurisdictions:
         legislation_ref: https://bviita.vg/economic-substance
 
   # ───────────────────────────────────────────────────────────────────────────
-  # EXPANSION — all JTC Group office jurisdictions (researched & verified 2026-06)
+  # EXPANSION — all FastFund office jurisdictions (researched & verified 2026-06)
   # Filing reality varies sharply: most authorities are ONLINE-only (we store the
   # portal link + metadata), a minority publish real downloadable PDFs (US/IRS,
   # Hong Kong, Austria, Poland, New Zealand, Bermuda). `forms_index` (discover-all)

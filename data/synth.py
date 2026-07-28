@@ -1,4 +1,4 @@
-"""Synthetic data generator + seeder for SFO Hub.
+"""Synthetic data generator + seeder for FastFund.
 
 Privacy-compliant demo data: a JTC service catalogue loaded from
 ``data/services.yaml``, plus N fictional single family offices with realistic,
@@ -316,7 +316,7 @@ def seed_actions(sfo_ids: list[int], rng: random.Random) -> int:
 
 def seed_conversations(sfo_ids: list[int], rng: random.Random) -> int:
     """Realistic intake→upsell conversation logs for a sample of families."""
-    email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
+    email = os.environ.get("ADMIN_EMAIL", "admin@fastfund.org")
     n = 0
     for sid in rng.sample(sfo_ids, k=min(12, len(sfo_ids))):
         sfo = store.get_sfo(sid)
@@ -361,7 +361,7 @@ def autoseed_if_empty(count: int = 100, seed: int = 42) -> bool:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Seed SFO Hub demo data")
+    ap = argparse.ArgumentParser(description="Seed FastFund demo data")
     ap.add_argument("--count", type=int, default=100, help="number of synthetic SFOs")
     ap.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
     ap.add_argument("--services-only", action="store_true",

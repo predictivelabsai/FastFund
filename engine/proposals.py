@@ -1,7 +1,7 @@
 """AI proposal generation — turn a recommendation into a client-ready next step.
 
 Given an SFO profile and a specific recommended service, draft a short, warm
-proposal paragraph in a JTC Private Office relationship-manager voice, plus a
+proposal paragraph in a FastFund Family Office relationship-manager voice, plus a
 concrete next step (a consultation). Degrades gracefully: with no LLM key it
 returns a templated proposal so the feature still works in a demo.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 from rag import llm
 
 _SYS = (
-    "You are a JTC Private Office relationship manager writing to the principal of "
+    "You are a FastFund Family Office relationship manager writing to the principal of "
     "a single family office. Draft a concise (3-5 sentence) proposal for ONE "
     "service: acknowledge their situation, explain specifically why this service "
     "fits THIS family, and close with a clear, low-pressure next step (a short "
@@ -24,11 +24,11 @@ def _template(profile: dict, service: dict, rationale: str) -> str:
     return (
         f"Dear {name},\n\n"
         f"Drawing on our understanding of your family office, we'd like to propose "
-        f"JTC's {service['name']}. {rationale} "
+        f"FastFund's {service['name']}. {rationale} "
         f"We believe this is a natural next step alongside the services we already "
         f"provide, and would welcome a short introductory consultation to walk you "
         f"through how it would work for your circumstances.\n\n"
-        f"With kind regards,\nYour JTC Private Office team")
+        f"With kind regards,\nYour FastFund Family Office team")
 
 
 def draft(profile: dict, service: dict, rationale: str) -> str:

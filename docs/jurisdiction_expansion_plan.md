@@ -1,13 +1,13 @@
-# TaxHub — Jurisdiction Expansion Plan
+# FastFund — Jurisdiction Expansion Plan
 
-Extend coverage from the 6 MVP domiciles to **all jurisdictions JTC Group
-operates in** (sourced from jtcgroup.com/offices — ~24 distinct jurisdictions),
+Extend coverage from the 6 MVP domiciles to **all jurisdictions FastFund
+operates in** (sourced from fastfund.org/offices — ~24 distinct jurisdictions),
 reusing the existing forms-first pattern. No new architecture — each
 jurisdiction is just config + a scrape.
 
 ## ✅ Status — COMPLETE (all 24 + 2 implemented, 2026-06)
 
-`config/tax_forms.yaml` now carries **26 jurisdiction blocks** covering every JTC
+`config/tax_forms.yaml` now carries **26 jurisdiction blocks** covering every FastFund
 office jurisdiction. All authority forms pages were researched and the URLs
 verified before adding. Scraping yield (downloaded PDFs vs portal/metadata):
 
@@ -54,7 +54,7 @@ filing-type labels, agents and UI all work unchanged.
 
 Jersey · Guernsey · Luxembourg · Ireland · Cayman · BVI.
 
-## Expansion targets (JTC office jurisdictions)
+## Expansion targets (FastFund office jurisdictions)
 
 Tiered by fund-services relevance and scraping effort. **Filing reality** is the
 key planning input — many authorities are online-only (store metadata + portal

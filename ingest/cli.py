@@ -1,4 +1,4 @@
-"""TaxHub scraper orchestrator (config-driven).
+"""FastFund scraper orchestrator (config-driven).
 
 Usage:
     python3.12 scrape_tax.py --list
@@ -167,7 +167,7 @@ def scrape_jurisdiction(jur_code: str, cfg: dict, use_ai: bool,
 
 
 def main():
-    ap = argparse.ArgumentParser(description="TaxHub document scraper")
+    ap = argparse.ArgumentParser(description="FastFund document scraper")
     ap.add_argument("--jurisdiction", "-j", help="Jurisdiction code, e.g. JE")
     ap.add_argument("--doc", help="Single document id (with --jurisdiction)")
     ap.add_argument("--all", action="store_true", help="Scrape all jurisdictions")

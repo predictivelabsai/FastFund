@@ -1,4 +1,4 @@
-"""TaxHub storage — compatibility shim.
+"""FastFund storage — compatibility shim.
 
 Persistence used to live here against SQLite. Storage is now pluggable (see the
 ``storage`` package, selected by the ``DATA_STORAGE`` env var: ``neo4j`` default,
@@ -24,5 +24,5 @@ def __getattr__(name: str):
 if __name__ == "__main__":
     store = get_store()
     store.init_db()
-    print("Initialized TaxHub storage:", type(store).__name__)
+    print("Initialized FastFund storage:", type(store).__name__)
     print(store.stats())

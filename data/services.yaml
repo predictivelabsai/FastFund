@@ -1,4 +1,4 @@
-# JTC Private Office service catalogue + cross-sell graph.
+# FastFund Family Office service catalogue + cross-sell graph.
 #
 # `services` seed (:Service) nodes; `cross_sells` seed the
 # (:Service)-[:CROSS_SELLS_TO {weight}]->(:Service) graph the engine traverses.
@@ -87,7 +87,7 @@ services:
     keywords: [regulatory, compliance, FATCA, CRS, AEOI, economic substance, beneficial ownership]
 
   - key: private_office
-    name: JTC Private Office (Dedicated)
+    name: FastFund Family Office (Dedicated)
     category: advisory
     tier: premium
     description: A dedicated relationship and full service stack for the largest families — one point of contact across everything.

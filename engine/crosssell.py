@@ -57,7 +57,7 @@ def _graph_candidates(profile: dict, already: set[str]) -> list[dict]:
 
 
 _AI_SYS = (
-    "You are a JTC Private Office relationship manager. Given a family-office "
+    "You are a FastFund Family Office relationship manager. Given a family-office "
     "profile and a list of candidate services, score each candidate 0-1 for how "
     "well it fits THIS family right now and rewrite its rationale in one warm, "
     "specific sentence a relationship manager would say. Respond ONLY as a JSON "

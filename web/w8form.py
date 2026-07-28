@@ -2,7 +2,7 @@
 
 The right-hand pane normally shows the changes feed or a PDF viewer. This module
 backs a third mode: a **W-8BEN-E facsimile** (Certificate of Foreign Status of
-Beneficial Owner, the entity form) that an agent fills in live from what TaxHub
+Beneficial Owner, the entity form) that an agent fills in live from what FastFund
 already knows about the entity, then validates.
 
 Nothing is fabricated from thin air: every value is *sourced* from the entity
@@ -37,7 +37,7 @@ _ADDRESSES = {
     "BM": "Clarendon House, 2 Church Street, Hamilton HM 11, Bermuda",
 }
 
-# Chapter 3 status (entity type) inferred from the TaxHub entity type.
+# Chapter 3 status (entity type) inferred from the FastFund entity type.
 _CH3 = {"fund": "Corporation", "spv": "Corporation", "holdco": "Corporation",
         "company": "Corporation", "gp": "Partnership", "trust": "Simple trust"}
 

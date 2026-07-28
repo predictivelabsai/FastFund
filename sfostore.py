@@ -1,4 +1,4 @@
-"""SFO Hub storage — compatibility shim.
+"""FastFund storage — compatibility shim.
 
 Storage is pluggable (see the ``storage`` package, selected by the
 ``DATA_STORAGE`` env var: ``neo4j`` default, or ``sqlite``). This module gives the
@@ -9,7 +9,7 @@ instance — so swapping the backend is invisible to callers.
 
 from __future__ import annotations
 
-from storage import get_store, reset_store, utcnow  # noqa: F401  (re-exported)
+from family.storage import get_store, reset_store, utcnow  # noqa: F401
 
 
 def __getattr__(name: str):
@@ -21,5 +21,5 @@ def __getattr__(name: str):
 if __name__ == "__main__":
     store = get_store()
     store.init_db()
-    print("Initialized SFO Hub storage:", type(store).__name__)
+    print("Initialized FastFund storage:", type(store).__name__)
     print(store.stats())

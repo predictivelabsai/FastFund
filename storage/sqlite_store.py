@@ -21,7 +21,7 @@ from .base import Storage, utcnow
 
 class SqliteStore(Storage):
     def __init__(self, db_url: str | None = None):
-        self.db_url = db_url or os.environ.get("DB_URL", "sqlite:///taxhub.db")
+        self.db_url = db_url or os.environ.get("DB_URL", "sqlite:///fastfund.db")
         # check_same_thread=False so the FastHTML app and CLI scrapers can share it.
         connect_args = {"check_same_thread": False} if self.db_url.startswith("sqlite") else {}
         self.engine = create_engine(self.db_url, future=True, connect_args=connect_args)
@@ -153,7 +153,7 @@ class SqliteStore(Storage):
             last_seen         TEXT,
             UNIQUE(jurisdiction_code, form_key)
         )""",
-        # Entities (the funds/SPVs JTC administers). jurisdictions/activities
+        # Entities (the funds/SPVs FastFund administers). jurisdictions/activities
         # are stored as comma-joined text and returned as lists.
         """CREATE TABLE IF NOT EXISTS entities (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +166,7 @@ class SqliteStore(Storage):
             client_ref    TEXT,
             status        TEXT,
             team_id       INTEGER,
+            sfo_id        INTEGER,
             created_at    TEXT,
             updated_at    TEXT,
             UNIQUE(client_ref)
@@ -285,7 +286,10 @@ class SqliteStore(Storage):
             for stmt in self.INDEXES:
                 c.execute(text(stmt))
             # Idempotent column migrations for pre-existing DBs.
-            for tbl, col, decl in (("entities", "team_id", "INTEGER"),
+            for tbl, col, decl in (("users", "name", "TEXT"),
+                                   ("users", "role", "TEXT DEFAULT 'user'"),
+                                   ("entities", "team_id", "INTEGER"),
+                                   ("entities", "sfo_id", "INTEGER"),
                                    ("chat_sessions", "team_id", "INTEGER")):
                 try:
                     c.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}"))
@@ -297,7 +301,7 @@ class SqliteStore(Storage):
     def _seed_admin(self) -> None:
         import bcrypt
 
-        email = os.environ.get("ADMIN_EMAIL", "admin@jtcgroup.com")
+        email = os.environ.get("ADMIN_EMAIL", "admin@fastfund.org")
         pw = os.environ.get("ADMIN_PASSWORD", "Funds2$2")
         with self.conn() as c:
             exists = c.execute(
@@ -310,12 +314,12 @@ class SqliteStore(Storage):
                         "INSERT INTO users (email, password_hash, name, role) "
                         "VALUES (:e, :p, :n, 'admin')"
                     ),
-                    {"e": email, "p": pw_hash, "n": "JTC Admin"},
+                    {"e": email, "p": pw_hash, "n": "FastFund Admin"},
                 )
 
     # Platform admins seeded as global admins (comma-separated env override).
     PLATFORM_ADMINS = ("julian@predictivelabs.co.uk", "kaljuvee@gmail.com")
-    DEFAULT_TEAM = "JTC Group"
+    DEFAULT_TEAM = "FastFund"
 
     def _seed_platform(self) -> None:
         """Ensure a default team exists, the platform admins are global admins +
@@ -955,6 +959,7 @@ class SqliteStore(Storage):
             "client_ref": entity.get("client_ref") or entity.get("name"),
             "status": entity.get("status") or "active",
             "team_id": entity.get("team_id"),
+            "sfo_id": entity.get("sfo_id"),
         }
         with self.conn() as c:
             row = c.execute(text("SELECT id FROM entities WHERE client_ref=:k"),
@@ -962,16 +967,16 @@ class SqliteStore(Storage):
             if row:
                 # Don't overwrite an existing team_id with NULL on a metadata refresh.
                 upd = {k: val for k, val in v.items()
-                       if not (k == "team_id" and val is None)}
+                       if not (k in ("team_id", "sfo_id") and val is None)}
                 sets = ", ".join(f"{k}=:{k}" for k in upd)
                 c.execute(text(f"UPDATE entities SET {sets}, updated_at=:now WHERE id=:id"),
                           {**upd, "now": now, "id": row[0]})
                 return row[0]
             res = c.execute(text(
                 "INSERT INTO entities (name,type,domicile,jurisdictions,fy_end,"
-                "activities,client_ref,status,team_id,created_at,updated_at) VALUES "
+                "activities,client_ref,status,team_id,sfo_id,created_at,updated_at) VALUES "
                 "(:name,:type,:domicile,:jurisdictions,:fy_end,:activities,"
-                ":client_ref,:status,:team_id,:now,:now)"), {**v, "now": now})
+                ":client_ref,:status,:team_id,:sfo_id,:now,:now)"), {**v, "now": now})
             return int(res.lastrowid)
 
     def get_entity(self, entity_id: int) -> dict | None:

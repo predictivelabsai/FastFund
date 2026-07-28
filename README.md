@@ -1,188 +1,159 @@
-# JTC TaxHub
+# FastFund
 
-Tax-law traceability for a fund-management back office. TaxHub scrapes official
-tax documents across the jurisdictions JTC Group operates in, captures **every
-version**, detects and explains **every change**, and traces guidance back to
-the **primary law** it interprets.
+Open-source family-office relationship management and multijurisdiction tax
+filing intelligence in one application.
 
-Deployed at **taxhub.predictivelabs.ai**.
+FastFund joins the full family-office outreach workflow—family profiles,
+portfolios, service coverage, recommendations, proposals and follow-ups—with
+the full tax workflow—legal entities, filing obligations, calendars, official
+forms, regulatory change tracking, FATCA/CRS and cited tax-law answers.
 
-> **Architecture & diagrams:** see [`docs/architecture_readme.md`](docs/architecture_readme.md)
-> for component/data-flow/graph-model Mermaid diagrams, the full environment-variable
-> reference, and AuraDB deployment steps.
+### Family-office outreach
 
-## What it does
+![FastFund family-office workflow](docs/fastfund-family-office.gif)
 
-- **Scrapes** legislation, guidance/circulars, gazettes and treaties from
-  official government sources (config-driven, one entry per document).
-- **Versions** every capture immutably — the audit trail of how the law changed.
-- **Diffs** consecutive versions and uses **xAI Grok** to summarise, in plain
-  English, *what changed* and *the back-office impact*.
-- **Traces citations** — links each guidance note to the statutory provisions
-  it cites (e.g. "Article 123A of the Income Tax (Jersey) Law 1961").
-- **Answers questions** — a graph-RAG agent ("Ask the law") retrieves over the
-  citation/change graph and answers, in plain English, with cited sources.
+### Multijurisdiction tax filings
 
-## Jurisdictions (MVP)
+![FastFund tax-filing workflow](docs/fastfund-tax-filings.gif)
 
-| Code | Jurisdiction | Primary sources |
-|------|--------------|-----------------|
-| JE | Jersey | jerseylaw.je (consolidated PDFs), gov.je (Revenue Jersey) |
-| GG | Guernsey | gov.gg Revenue Service, guernseylegalresources.gg |
-| LU | Luxembourg | impotsdirects.public.lu, legilux.public.lu |
-| IE | Ireland | revenue.ie (TDMs), irishstatutebook.ie |
-| KY | Cayman Islands | ditc.ky, legislation.gov.ky |
-| VG | British Virgin Islands | bviita.vg, bvi.gov.vg |
+## Product areas
 
-## Architecture
+### Family Office
 
+- Conversational family-office advisor
+- Families, principals, advisers and relationship context
+- Portfolio holdings and recent transactions
+- Explainable service-gap and cross-sell recommendations
+- Outreach pipeline, proposals, consultations and next actions
+- Service coverage matrix and relationship graph
+- Family document storage
+
+### Tax & Compliance
+
+- Legal entities linked to their owning family office
+- Multijurisdiction filing obligations and deadlines
+- Filing calendar and operational status tracking
+- FATCA/CRS and W-8 readiness workflows
+- Official forms, legislation, guidance and treaties
+- Immutable document versions and regulatory change summaries
+- Citation-aware tax-law assistant and provenance graph
+
+## Unified model
+
+```text
+FamilyOffice
+  ├── FamilyMember
+  ├── Holding
+  ├── RelationshipAction
+  ├── ServiceRecommendation ── Service
+  └── OWNS_ENTITY ── LegalEntity
+                       ├── FilingObligation ── TaxForm
+                       └── IN_JURISDICTION ── Jurisdiction
+                                                   └── TaxDocument
+                                                        ├── Version
+                                                        ├── Change
+                                                        └── Citation
 ```
-config/tax_sources.yaml      document catalogue (per jurisdiction → source → doc)
-ingest/fetch.py              fetch (http/browser) + extract (html/pdf) + hash
-ingest/cli.py                orchestrator CLI  (python -m ingest.cli)
-storage/base.py              Storage interface (backend-neutral)
-storage/sqlite_store.py        ├─ SQLite/Postgres backend  (+ brute-force vectors)
-storage/neo4j_store.py         └─ Neo4j graph backend      (+ native vector index)
-taxstore.py                  store facade → active backend (import taxstore as store)
-rag/llm.py                   Grok change summaries + citation extraction
-rag/embeddings.py            chunking + local embeddings (fastembed) for vectors
-rag/retrieval.py             graph-RAG retrievers: fulltext / vector / hybrid + Q&A
-web/app.py                   FastHTML web viewer (+ /ask)   (uvicorn web.app:app)
-scripts/embed_backfill.py    chunk + embed every current version (enables vectors)
-scripts/migrate_sqlite_to_neo4j.py   backfill the graph from SQLite
-scripts/neo4j_local.sh       run a local, user-owned Neo4j for dev
-```
 
-The scraper hashes the *normalised text* of each document; when the hash changes,
-a new immutable version is appended and a change record (with diff + AI summary)
-is written.
+SQLite/Postgres and Neo4j implement the same public storage behavior. FastFund
+uses one database URL, one application process, one identity configuration and
+one navigation system for both domains.
 
-### Storage backends (`DATA_STORAGE`)
-
-No caller touches a database directly — everything goes through the `Storage`
-interface, selected at runtime:
-
-- **`neo4j`** (default) — graph backend. The data is naturally graph-shaped:
-
-  ```
-  (:Jurisdiction)-[:HAS_DOCUMENT]->(:Document)-[:HAS_VERSION]->(:Version)
-  (:Document)-[:CURRENT_VERSION]->(:Version)
-  (:Document)-[:HAS_CHANGE]->(:Change)-[:TO_VERSION|FROM_VERSION]->(:Version)
-  (:Version)-[:CITES {locator}]->(:Instrument)
-  ```
-
-  Citations are first-class edges, which is what powers graph-RAG retrieval.
-
-- **`sqlite`** — the original zero-infra relational backend (also Postgres via
-  `DB_URL`). Full parity is enforced by a single contract test run against both
-  (`tests/test_storage.py`).
-
-Switching backends is a one-line `.env` change. Stable integer ids are minted
-from a `(:Counter)` node so URLs (`/document/{id}`) work identically and the
-schema is portable from local Neo4j 4.x to AuraDB 5.x with no code change.
-
-### Graph-RAG ("Ask the law")
-
-`taxrag.py` retrieves in three steps: **full-text seed** (Neo4j Lucene index /
-SQLite scan) → **graph expansion** (each hit's cited instruments + latest change
-summary) → **generate** (Grok answers, citing sources by number). Retrieval and
-generation are separated, so a vector retriever can be added later without
-touching answer generation. Embeddings are deferred for now.
-
-## Usage
+## Quick start
 
 ```bash
-python3.12 -m ingest.cli --list                 # show configured documents
-python3.12 -m ingest.cli --jurisdiction JE      # scrape one jurisdiction
-python3.12 -m ingest.cli --all                  # scrape everything
-python3.12 -m ingest.cli --all --no-ai          # skip Grok summaries
-python3.12 -m ingest.cli --changes              # recent changes (CLI)
-python3.12 -m ingest.cli --stats                # DB summary
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 
-python3.12 -m uvicorn web.app:app --port 8000    # web viewer
+# For a zero-infrastructure local run:
+sed -i 's/^DATA_STORAGE=.*/DATA_STORAGE=sqlite/' .env
+
+# Seed family-office demo data.
+python -m family.data.synth --count 80 --seed 7
+
+# Load configured tax forms and source material as required.
+python -m ingest.cli --list
+
+python -m uvicorn web.app:app --port 5011
 ```
 
-## Configuration (`.env`)
+Open <http://localhost:5011>. The default development credentials come from
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`. Set `FASTFUND_PUBLIC=1` only for a
+local, unauthenticated demonstration.
 
-Copy `.env.example` to `.env`. Key settings:
+The family-office workspace is served at `/family/`; tax and knowledge routes
+share the main application. Both workspaces use the same FastFund navigation
+and database configuration.
 
-```
-DATA_STORAGE=neo4j        # 'neo4j' (default) or 'sqlite'
-DB_URL=sqlite:///taxhub.db
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=...
-NEO4J_DATABASE=neo4j
-XAI_API_KEY=...           # xAI Grok (OpenAI-compatible); optional, AI degrades gracefully
-XAI_BASE_URL=https://api.x.ai/v1
-GROK_MODEL=grok-4-1-fast-reasoning
-LLM_PROVIDER=xai
-ADMIN_EMAIL=admin@jtcgroup.com
-ADMIN_PASSWORD=...
-```
+## Configuration
 
-## Local Neo4j (dev)
+Important variables are documented in `.env.example`:
 
-A self-contained, user-owned instance (no sudo, separate from any system Neo4j):
+- `DATA_STORAGE=sqlite|neo4j`
+- `DB_URL=sqlite:///fastfund.db`
+- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`
+- `LLM_PROVIDER`, `XAI_API_KEY`, `AZURE_AI_FOUNDRY_*`
+- `APP_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`
+- `GOOGLE_CLIENT_*`, `GOOGLE_ALLOWED_DOMAINS`
+- `DOC_STORAGE`, `DOC_LOCAL_DIR`, and optional R2 credentials
+
+Without an LLM key, deterministic recommendations, filing workflows, document
+navigation and retrieval remain available; AI synthesis degrades gracefully.
+
+## Data and ingestion
 
 ```bash
-scripts/neo4j_local.sh setup     # one-time: build config + set initial password
-scripts/neo4j_local.sh start     # http://localhost:7474, bolt://localhost:7687
-python3.12 scripts/migrate_sqlite_to_neo4j.py --wipe   # backfill the graph from SQLite
+# Family-office catalogue and synthetic book
+python -m family.data.synth --count 80
+
+# List or ingest configured official tax sources
+python -m ingest.cli --list
+python -m ingest.cli --jurisdiction JE
+python -m ingest.cli --all --no-ai
+
+# Tax database statistics and recent changes
+python -m ingest.cli --stats
+python -m ingest.cli --changes
 ```
 
-`NEO4J_PASSWORD` (default `taxhub-dev-password`) is read from the environment at
-setup time. To run on SQLite instead, set `DATA_STORAGE=sqlite`.
+The demo generator creates fictional data only.
 
-## Deploy
+## Tests
 
-Docker / Coolify (port 5011). The `web` service serves the viewer; the `scrape`
-service (profile `tools`) runs the scraper against the shared data volume:
+```bash
+python -m pytest tests -q
+```
+
+The suite covers:
+
+- Tax storage and platform behavior
+- Family-office storage behavior
+- SQLite/Neo4j contract parity where Neo4j is reachable
+- The combined FastFund route surface
+- Family-office ownership of legal entities
+
+## Docker
 
 ```bash
 docker compose up -d web
 docker compose run --rm scrape --all
 ```
 
-Storage in production:
+The application listens on port `5011`. SQLite data and captured documents use
+the `fastfund-data` volume. A self-hosted Neo4j service is available through the
+`neo4j` profile; AuraDB can be selected using environment variables.
 
-- **AuraDB (recommended):** set `NEO4J_URI=neo4j+s://<id>.databases.neo4j.io`
-  plus `NEO4J_USER`/`NEO4J_PASSWORD`. No code change — the schema is created
-  version-tolerantly (4.x and 5.x syntaxes).
-- **Self-hosted Neo4j:** `docker compose --profile neo4j up -d` brings up a
-  bundled `neo4j:5.26-community` service.
-- **SQLite:** `DATA_STORAGE=sqlite` for a zero-infra deploy.
+## Documentation
 
-Run the scraper on a schedule (daily/weekly) to build the change history.
+- [FastFund user guide](docs/fastfund_user_guide.md)
+- [Architecture](docs/architecture_readme.md)
+- In-app guide: `/help`
 
-## Adding a document
+Generated PDF, PowerPoint, screenshots and demonstration GIFs are stored under
+`docs/`.
 
-Add a record under the relevant jurisdiction's source in
-`config/tax_sources.yaml`:
+## License
 
-```yaml
-- id: my_new_doc
-  title: Official Title
-  doc_type: legislation        # legislation | guidance | gazette | treaty
-  url: https://.../document.pdf
-  format: pdf                  # html | pdf
-  fetch: http                  # http | browser
-  # selector: "main"           # optional CSS pin for html
-```
-
-## Future plans
-
-- **PDF highlight & provenance** — replace the native-iframe form/document viewer
-  with a pdf.js viewer so an answer's citations are *traceable to the exact
-  passage*. Clicking a `[form:N]` / `[doc:N]` marker (or a cited source) will open
-  the PDF in the right pane, **jump to the relevant page, and highlight the cited
-  text** (pdf.js text-layer + `#search=`/`page=` deep-links). This closes the
-  loop from "the assistant said X" back to the precise words in the official
-  document — the core traceability promise, made visual.
-- **Per-site form-scraper adapters** — robust discovery/download of form PDFs
-  across all six authority sites, including the Cloudflare/JS-gated ones (see
-  the scraper notes below).
-- **Semantic upgrades** — re-rank hybrid results; a DocumentAgent eval set; a
-  Text2Cypher "metadata agent" for deadlines/counts and citation lookups.
-- **Change digest & alerts** — scheduled per-jurisdiction email/in-app digests
-  of recent changes.
+Apache License 2.0. See [LICENSE](LICENSE).

@@ -1,15 +1,15 @@
-"""Knowledge retrieval for the advisor — JTC services + industry benchmarks.
+"""Knowledge retrieval for the advisor — FastFund services + industry benchmarks.
 
 Two small corpora the conversational agent grounds its answers in:
 
-1. The **JTC service catalogue** stored in the graph (``store.search_services``) —
+1. The **FastFund service catalogue** stored in the graph (``store.search_services``) —
    what the relationship manager can actually offer and cross-sell.
 2. A compact set of **public industry benchmarks** (aggregated SFO allocation /
    AUM / governance stats) used to make recommendations sound advisory rather
    than salesy. These are aggregate, non-attributed figures suitable for a demo.
 
 Retrieval is keyword-based today (substring over service text). The interface is
-deliberately the same shape as TaxHub's retriever ABC, so a vector / hybrid
+deliberately the same shape as FastFund's retriever ABC, so a vector / hybrid
 retriever (fastembed + a vector index) can be slotted in later without touching
 the agent — see the architecture roadmap.
 """
@@ -31,7 +31,7 @@ BENCHMARKS = [
      "administration, insurance and reporting needs often unmet by core advisors."},
     {"topic": "reporting", "text": "Consolidated, multi-entity, multi-currency "
      "reporting is a recurring pain point as portfolios diversify across funds, "
-     "direct deals and private assets — a driver of demand for platforms like JTC Edge."},
+     "direct deals and private assets — a driver of demand for platforms like FastFund Edge."},
     {"topic": "structuring", "text": "As wealth crosses generations and "
      "jurisdictions, demand rises for trust/foundation structuring, tax reporting "
      "and treasury/banking services delivered under one relationship."},
@@ -46,7 +46,7 @@ def search_benchmarks(query: str, limit: int = 3) -> list[dict]:
 
 
 def services_context(query: str, limit: int = 6) -> str:
-    """Numbered, citable context blocks of matching JTC services."""
+    """Numbered, citable context blocks of matching FastFund services."""
     svcs = store.search_services(query, limit=limit) if query else store.list_services(limit=limit)
     if not svcs:
         return ""

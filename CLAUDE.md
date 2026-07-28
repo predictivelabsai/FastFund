@@ -4,11 +4,11 @@ Guidance for Claude Code (and humans) working in this repo.
 
 ## What this is
 
-**SFO Hub** — an AI conversational advisor that cross-sells/upsells to single
-family offices (SFOs), simulating a JTC Private Office relationship manager. It is
-the sister app to **TaxHub** (`../taxhub`) and deliberately mirrors its stack,
+**FastFund** — an AI conversational advisor that cross-sells/upsells to single
+family offices (SFOs), simulating a FastFund Family Office relationship manager. It is
+the sister app to **FastFund** (`../fastfund`) and deliberately mirrors its stack,
 look-and-feel, and operational model. When in doubt about a convention, check how
-TaxHub does it.
+FastFund does it.
 
 ## Stack
 
@@ -25,7 +25,7 @@ storage/base.py            Storage ABC — the contract both backends implement
 storage/sqlite_store.py    relational backend (zero-infra; DB_URL)
 storage/neo4j_store.py     graph backend (default; AuraDB-portable)
 sfostore.py                facade: `import sfostore as store` → active backend
-data/services.yaml         JTC service catalogue + cross-sell graph (edit to extend services)
+data/services.yaml         FastFund service catalogue + cross-sell graph (edit to extend services)
 data/synth.py              synthetic SFO generator + seeder (Faker)
 engine/rules.py            transparent cross/upsell rule catalogue (edit to add rules)
 engine/crosssell.py        hybrid engine: rules → graph expansion → AI re-rank → persist
@@ -73,7 +73,7 @@ graph is `(:Service)-[:CROSS_SELLS_TO {weight}]->(:Service)`.
 pip install -r requirements.txt
 cp .env.example .env                       # DATA_STORAGE=sqlite for local
 python -m data.synth --count 80           # seed catalogue + SFOs + funnel
-python -m uvicorn web.app:app --port 5021 # SFOHUB_PUBLIC=1 to skip login
+python -m uvicorn web.app:app --port 5021 # FASTFUND_PUBLIC=1 to skip login
 python -m pytest tests/ -q
 ```
 
@@ -81,10 +81,10 @@ See `SKILLS.md` for the full dev/test/deploy/Azure playbook.
 
 ## Conventions
 
-- Match the surrounding code: terse module docstrings explaining the *why*, JTC
-  brand palette in `web/app.py` CSS (`--navy #6b1766` / `--accent #ba2a84`), and
+- Match the surrounding code: terse module docstrings explaining the *why*, FastFund
+  brand palette in `web/app.py` CSS (`--navy #102a43` / `--accent #0f766e`), and
   the `[service:N]`/`[sfo:N]`/`[rec:N]` markers in tool output that the UI parses.
 - All demo data is **synthetic** (`data/synth.py`). Never introduce real client data.
-- **Always regenerate the user guide with a date stamp**: `scripts/render_user_guide.py`
-  writes `docs/sfohub_user_guide_<YYYY-MM-DD>.pdf` and deletes the prior dated PDF
+- Regenerate all guide formats with `scripts/generate_fastfund_user_guide.py all`.
+  writes `docs/fastfund_user_guide_<YYYY-MM-DD>.pdf` and deletes the prior dated PDF
   (the app serves the newest at `/user-guide-pdf`). See `SKILLS.md §9`.

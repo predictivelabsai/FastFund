@@ -1,6 +1,6 @@
-# TaxHub Evals
+# FastFund Evals
 
-LLM-judged evaluation of TaxHub's agents against a ground-truth set, using the
+LLM-judged evaluation of FastFund's agents against a ground-truth set, using the
 [deepeval](https://github.com/confident-ai/deepeval) framework.
 
 ## What it does

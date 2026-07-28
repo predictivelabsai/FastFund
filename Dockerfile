@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=5011 \
-    DB_URL=sqlite:////app/data/taxhub.db
+    DB_URL=sqlite:////app/data/fastfund.db
 
 WORKDIR /app
 

@@ -1,5 +1,5 @@
 # Ground-truth eval cases for the cross/upsell engine.
-# Each case: a synthetic SFO profile + the service keys a JTC relationship manager
+# Each case: a synthetic SFO profile + the service keys a FastFund relationship manager
 # would expect to be recommended. The harness scores the rule engine's output
 # (deterministic, AI off) against these — precision / recall / hit-rate.
 

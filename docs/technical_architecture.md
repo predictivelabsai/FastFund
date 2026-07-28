@@ -1,4 +1,4 @@
-# SFO Hub — Technical Architecture (Agentic)
+# FastFund — Technical Architecture (Agentic)
 
 The AI conversational advisor for cross-selling/upselling to single family offices
 (SFOs). This document describes the **agentic architecture**: the LangGraph
@@ -59,7 +59,7 @@ flowchart TB
 
     PROFILE["profile_agent<br/>who the client is"]
     NEEDS["needs_agent<br/>detect gaps → categories"]
-    SERVICES["services_agent<br/>explain JTC services"]
+    SERVICES["services_agent<br/>explain FastFund services"]
     RECOMMEND["recommend_agent<br/>ranked cross/upsell"]
     BENCH["benchmark_agent<br/>industry context"]
     DATA["data_agent<br/>text-to-SQL analytics"]
@@ -88,7 +88,7 @@ flowchart TB
 |-------|-----|-----------|
 | `profile_agent` | Ground in the open family (AUM, mix, services, pains) | `store.get_sfo / search_sfos` |
 | `needs_agent` | Detect gaps from a described setup → service categories | `rag/knowledge.py` |
-| `services_agent` | Explain JTC services for a topic | `store.search_services` |
+| `services_agent` | Explain FastFund services for a topic | `store.search_services` |
 | `recommend_agent` | Ranked cross/upsell with rationale + value | `engine/crosssell.py` |
 | `benchmark_agent` | Aggregate industry benchmarks | `rag/knowledge.py` |
 | `data_agent` | Quantitative book-wide questions via text-to-SQL | `rag/text2sql.py` |
@@ -176,7 +176,7 @@ flowchart LR
     GH -->|"deploy webhook"| HOST["Container platform<br/>(Azure Container Apps)"]
     HOST --> BUILD["Docker build<br/>Dockerfile · port 5021"]
     BUILD --> RUN["Rolling update<br/>healthcheck /health"]
-    RUN --> LIVE(["sfohub.predictivelabs.ai"])
+    RUN --> LIVE(["fastfund.predictivelabs.ai"])
     LIVE --> BLOB[("Azure Blob Storage")]
     LIVE --> DB[("PostgreSQL")]
     LIVE --> GROK[["xAI Grok / Azure AI Foundry"]]

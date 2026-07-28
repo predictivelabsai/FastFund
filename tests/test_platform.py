@@ -26,7 +26,7 @@ def _entity(name, team_id, ref):
 # ── Seeding / platform admins ────────────────────────────────────────────────
 def test_seed_creates_default_team_and_admins(store):
     teams = store.list_teams()
-    assert any(t["name"] == "JTC Group" for t in teams)
+    assert any(t["name"] == "FastFund" for t in teams)
     emails = {u["email"]: u["role"] for u in store.list_users()}
     assert emails.get("julian@predictivelabs.co.uk") == "admin"
     assert emails.get("kaljuvee@gmail.com") == "admin"

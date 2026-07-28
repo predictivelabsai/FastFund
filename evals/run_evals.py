@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.12
-"""Run TaxHub agent evals with an LLM judge (deepeval).
+"""Run FastFund agent evals with an LLM judge (deepeval).
 
 For each ground-truth row we run the named agent — with a chosen retriever — to
 produce an answer, then a deepeval ``GEval`` correctness metric (judged by xAI

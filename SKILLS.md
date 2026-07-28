@@ -128,7 +128,7 @@ python3.12 -m ingest.cli --forms     # scrape forms -> data/forms + (:Form)
 ```
 
 **Coverage = 26 jurisdictions** (config `tax_forms.yaml`): the 6 MVP domiciles
-(JE GG LU IE KY VG) plus all JTC office jurisdictions (IM MU MT CY NL CH GB DE AT
+(JE GG LU IE KY VG) plus all FastFund office jurisdictions (IM MU MT CY NL CH GB DE AT
 PL US HK SG MY NZ AE BS BR ZA BM). Most authorities are **online-filing** (stored
 as `filing_type: online` with a portal link); real downloadable PDFs come from
 US/IRS, Hong Kong, New Zealand, Poland, Bermuda, Luxembourg, Guernsey. `forms_index`
@@ -369,39 +369,39 @@ git push origin main
 The Dockerfile uses a **Dockerfile build pack** (not docker-compose), so the
 `VOLUME /app/data` is an **anonymous** volume that is **wiped on every redeploy** —
 uploaded PDFs, scraped form PDFs, and a SQLite DB would silently vanish. Fix
-(one-time, in Coolify): taxhub app → **Persistent Storage → + Add → Volume Mount**,
-name `taxhub-data`, destination `/app/data`, then **Redeploy** (the named volume
+(one-time, in Coolify): fastfund app → **Persistent Storage → + Add → Volume Mount**,
+name `fastfund-data`, destination `/app/data`, then **Redeploy** (the named volume
 persists across future deploys; it starts empty, so re-upload after enabling).
 Symptom if missing: `/form-pdf/{id}` returns 200 right after upload but 303
 (redirect to source) after the next redeploy. AuraDB metadata is unaffected
 (it's external); only the on-disk bytes are lost.
 
-### TaxHub production deployment (live runbook)
+### FastFund production deployment (live runbook)
 
-Deployed 2026-06-12 to **https://taxhub.predictivelabs.ai** on the Coolify at
+Deployed 2026-06-12 to **https://fastfund.predictivelabs.ai** on the Coolify at
 `coolify.predictivelabs.ai` (login `info@predictivelabs.co.uk`). Project
-**JTCGroup** → resource **taxhub** (umbrella project holds multiple resources).
+**FastFund** → resource **fastfund** (umbrella project holds multiple resources).
 Server: `localhost` (Coolify host, `187.124.131.91`). DNS: A record
-`taxhub → 187.124.131.91` (set in registrar).
+`fastfund → 187.124.131.91` (set in registrar).
 
 **Git source = Deploy Key (no GitHub App / no browser login needed).** The repo
-`predictivelabsai/taxhub` is private. Instead of the GitHub-App manifest flow
+`predictivelabsai/fastfund` is private. Instead of the GitHub-App manifest flow
 (which 500s without a browser GitHub session), use a deploy key driven by the
 already-authorised `gh` CLI:
 
 ```bash
 # 1. Generate a keypair
-ssh-keygen -t ed25519 -f /tmp/taxhub_deploy -N "" -C "coolify-taxhub-deploy"
+ssh-keygen -t ed25519 -f /tmp/fastfund_deploy -N "" -C "coolify-fastfund-deploy"
 # 2. Add PUBLIC key to the repo as a read-only deploy key
-gh repo deploy-key add /tmp/taxhub_deploy.pub --title coolify-taxhub -R predictivelabsai/taxhub
-# 3. Add PRIVATE key to Coolify: Security → Private Keys → + Add  (name: taxhub-deploy-key)
+gh repo deploy-key add /tmp/fastfund_deploy.pub --title coolify-fastfund -R predictivelabsai/fastfund
+# 3. Add PRIVATE key to Coolify: Security → Private Keys → + Add  (name: fastfund-deploy-key)
 ```
 
 Then in Coolify: **+ Add Resource → Private Repository (with Deploy Key)** →
-select `taxhub-deploy-key` → Repository URL `git@github.com:predictivelabsai/taxhub.git`,
+select `fastfund-deploy-key` → Repository URL `git@github.com:predictivelabsai/fastfund.git`,
 Branch `main`, **Build Pack = Dockerfile**. On the resource General page set:
-- **Name**: `taxhub`
-- **Domains**: `https://taxhub.predictivelabs.ai` (Coolify auto-provisions the TLS cert)
+- **Name**: `fastfund`
+- **Domains**: `https://fastfund.predictivelabs.ai` (Coolify auto-provisions the TLS cert)
 - **Ports Exposes**: `5011` (Dockerfile CMD runs uvicorn on 5011)
 
 **Env vars** (Environment Variables → Developer view → paste, Save All): the full
@@ -419,14 +419,14 @@ to `/login`; only `/health` and `/login` are public. So the seeded admin login
 takes ~4-5 min; env-only redeploys are fast (layers cached). Coolify uses the
 Dockerfile `HEALTHCHECK` (`/health`) for the rolling update.
 
-### Post-deploy verification (TaxHub prod)
+### Post-deploy verification (FastFund prod)
 
 ```bash
-B=https://taxhub.predictivelabs.ai; J=/tmp/c.txt; rm -f $J
+B=https://fastfund.predictivelabs.ai; J=/tmp/c.txt; rm -f $J
 curl -sS $B/health                                   # {"status":"ok"}
 curl -so/dev/null -w "%{http_code}\n" $B/             # 303 -> /login (auth gate)
 curl -sS -c$J -b$J -o/dev/null -w "%{http_code}\n" \
-  --data-urlencode email=admin@jtcgroup.com --data-urlencode 'password=Funds2$2' $B/login   # 303 -> /
+  --data-urlencode email=admin@fastfund.org --data-urlencode 'password=Funds2$2' $B/login   # 303 -> /
 curl -sS -c$J -b$J $B/ | grep -o Jersey               # dashboard reads AuraDB
 curl -sS -c$J -b$J --data-urlencode "q=economic substance Jersey?" $B/ask | grep -o Answer  # graph-RAG + Grok
 ```

@@ -1,4 +1,4 @@
-"""Pluggable storage for TaxHub.
+"""Pluggable storage for FastFund.
 
 The active backend is chosen by the ``DATA_STORAGE`` environment variable:
 

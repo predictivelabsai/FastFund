@@ -1,4 +1,4 @@
-"""Storage interface for TaxHub.
+"""Storage interface for FastFund.
 
 The persistence backbone is pluggable: a relational backend (SQLite, and by
 extension Postgres) and a graph backend (Neo4j) both implement this one
@@ -39,7 +39,7 @@ def legislation_label(url: str) -> str:
 
 
 class Storage(abc.ABC):
-    """Backend-neutral persistence + read API for TaxHub.
+    """Backend-neutral persistence + read API for FastFund.
 
     A document has many immutable versions; whenever a freshly scraped
     version's content hash differs from the stored current version, a new
@@ -256,7 +256,7 @@ class Storage(abc.ABC):
         legislation/guidance Document shares the URL — so Cypher and graph-RAG
         can traverse Form → law → tracked text. Idempotent. Returns counts."""
 
-    # ── Entities (the funds/SPVs JTC administers) ──────────────────────────
+    # ── Entities (the funds/SPVs FastFund administers) ──────────────────────────
     # An Entity has a domicile + operating jurisdictions; obligations (filings it
     # owes) are derived from the forms catalogue in a later phase. ``jurisdictions``
     # and ``activities`` are lists in/out regardless of backend.
@@ -265,7 +265,8 @@ class Storage(abc.ABC):
     def upsert_entity(self, entity: dict) -> int:
         """Insert/update an entity by natural key ``client_ref`` (falls back to
         ``name``). Fields: name, type, domicile, jurisdictions[list], fy_end,
-        activities[list], client_ref, status. Returns the entity id."""
+        activities[list], client_ref, status, optional sfo_id. Returns the entity
+        id. When set, sfo_id links the filing entity to its family office."""
 
     @abc.abstractmethod
     def get_entity(self, entity_id: int) -> dict | None:

@@ -1,4 +1,4 @@
-"""Compute ground-truth values from the canonical seeded SFO Hub DB.
+"""Compute ground-truth values from the canonical seeded FastFund DB.
 
 The deployed demo auto-seeds with run_seed(count=100, seed=42); seeding locally
 with the same args reproduces identical data, so the figures printed here are the
@@ -7,12 +7,12 @@ seeder to refresh the ground truth.
 
 Usage:
     python -m data.synth ... (or) python -c "from data import synth; synth.run_seed(100,42)"
-    DB_URL=sqlite:///sfohub.db python evals/verify_data.py
+    DB_URL=sqlite:///fastfund.db python evals/verify_data.py
 """
 import os
 import sqlalchemy
 
-DB_URL = os.environ.get("DB_URL", "sqlite:///sfohub.db")
+DB_URL = os.environ.get("DB_URL", "sqlite:///fastfund.db")
 engine = sqlalchemy.create_engine(DB_URL)
 
 

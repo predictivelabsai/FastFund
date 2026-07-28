@@ -6,7 +6,7 @@ inlined as base64, so the HTML is fully self-contained (works offline, no JS,
 embeddable in the app's Technical Guide pane). The first diagram (the §2 Azure
 architecture) is also written to docs/architecture_diagram.png as a standalone.
 
-markdown (tables + toc + fenced code) -> JTC-branded HTML with the diagrams
+markdown (tables + toc + fenced code) -> FF-branded HTML with the diagrams
 wired in.
 
 Run:  python3.12 scripts/generate_architecture_html.py
@@ -28,7 +28,7 @@ DIAGRAM_PNG = ROOT / "docs" / "architecture_diagram.png"
 MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs"
 
 CSS = """
-:root{--navy:#6b1766;--navy2:#550055;--accent:#ba2a84;--text:#48484f;--muted:#7a7a85;--line:#e6e3ec;}
+:root{--navy:#102a43;--navy2:#0b1f33;--accent:#0f766e;--text:#48484f;--muted:#7a7a85;--line:#e6e3ec;}
 *{box-sizing:border-box}
 body{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--text);
   font-size:15px;line-height:1.6;max-width:900px;margin:0 auto;padding:32px 28px;}
@@ -42,7 +42,7 @@ table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
 th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px}
 td{border-bottom:1px solid var(--line);padding:7px 10px;vertical-align:top}
 tr:nth-child(even) td{background:#f7f4f9}
-code{background:#efeaf3;color:var(--navy);padding:1px 5px;border-radius:4px;font-size:13px}
+code{background:#e6f4f1;color:var(--navy);padding:1px 5px;border-radius:4px;font-size:13px}
 pre{background:#f5f6f4;border:1px solid var(--line);border-radius:6px;padding:12px 14px;
   font-size:12.5px;overflow-x:auto}
 pre code{background:none;color:var(--text);padding:0}
@@ -82,8 +82,8 @@ def render_diagrams(sources: list[str]) -> list[bytes]:
                 "<script type='module'>"
                 f"import mermaid from '{MERMAID_CDN}';"
                 "mermaid.initialize({startOnLoad:false,theme:'base',"
-                "themeVariables:{primaryColor:'#f3e9f3',primaryBorderColor:'#6b1766',"
-                "primaryTextColor:'#48484f',lineColor:'#ba2a84',fontFamily:'Segoe UI,Arial'}});"
+                "themeVariables:{primaryColor:'#f3e9f3',primaryBorderColor:'#102a43',"
+                "primaryTextColor:'#48484f',lineColor:'#0f766e',fontFamily:'Segoe UI,Arial'}});"
                 f"const src={json.dumps(src)};"
                 "const {svg}=await mermaid.render('g','' + src);"
                 "document.getElementById('d').innerHTML=svg;"
@@ -113,7 +113,7 @@ def main() -> None:
     html_body = markdown.markdown(
         text, extensions=["tables", "toc", "fenced_code", "attr_list"])
 
-    captions = {0: "TaxHub on Azure — target production architecture"}
+    captions = {0: "FastFund on Azure — target production architecture"}
     for i, png in enumerate(pngs):
         b64 = base64.b64encode(png).decode()
         cap = captions.get(i, "")
@@ -122,7 +122,7 @@ def main() -> None:
         html_body = html_body.replace(f"<p>MERMAIDIMG{i}</p>", fig)
 
     html = (f"<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>TaxHub — Architecture (Azure)</title><style>{CSS}</style></head>"
+            f"<title>FastFund — Architecture (Azure)</title><style>{CSS}</style></head>"
             f"<body>{html_body}</body></html>")
     HTML_OUT.write_text(html)
     print(f"Wrote {HTML_OUT} ({HTML_OUT.stat().st_size // 1024} KB)")
