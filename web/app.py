@@ -1,0 +1,2693 @@
+"""TaxHub — 3-pane agentic web app.
+
+Left: nav + Tax Forms Tree + Shortcuts. Center: AI Assistant (SSE chat over the
+LangGraph orchestrator) with suggestion cards. Right: changes newsfeed, which
+swaps to a PDF viewer when a form/document is opened.
+
+Primary goal: find the correct TAX FORM. Traceability (versions, changes,
+citations) is the secondary layer.
+
+Run:  python3.12 -m uvicorn web.app:app --host 0.0.0.0 --port 5011
+"""
+from __future__ import annotations
+
+import os
+
+from fasthtml.common import *
+from starlette.responses import StreamingResponse
+
+import taxstore as store
+from web import monitor
+from web import aeoi
+from web import w8form
+from web import email as mailer
+from web import chat_eval
+from agents import orchestrator
+from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
+from ingest.forms import forms_tree
+
+store.init_db()
+LOGIN_REQUIRED = os.environ.get("TAXHUB_PUBLIC", "0") != "1"
+
+CATEGORY_LABELS = {
+    "corporate_tax": "Corporate tax", "economic_substance": "Economic substance",
+    "aeoi": "AEOI (FATCA/CRS)", "beneficial_ownership": "Beneficial ownership",
+    "partnership": "Partnerships", "personal_employer": "Personal / employer",
+    "gst_vat": "GST / VAT", "fund": "Fund-specific", "other": "Other",
+}
+JUR_NAMES = {
+    # Live MVP domiciles
+    "JE": "Jersey", "GG": "Guernsey", "LU": "Luxembourg", "IE": "Ireland",
+    "KY": "Cayman Islands", "VG": "British Virgin Islands",
+    # Expansion — all JTC Group office jurisdictions
+    "IM": "Isle of Man", "MU": "Mauritius", "MT": "Malta", "CY": "Cyprus",
+    "NL": "Netherlands", "CH": "Switzerland", "GB": "United Kingdom", "DE": "Germany",
+    "AT": "Austria", "PL": "Poland", "US": "United States", "HK": "Hong Kong",
+    "SG": "Singapore", "MY": "Malaysia", "NZ": "New Zealand", "AE": "United Arab Emirates",
+    "BS": "Bahamas", "BR": "Brazil", "ZA": "South Africa", "BM": "Bermuda",
+}
+FILING_LABELS = {"downloadable": "📄 Downloadable form", "online": "🌐 Online filing",
+                 "reference": "📘 Reference / guidance"}
+FORM_TYPE_LABELS = {"return": "Return", "notification": "Notification",
+                    "declaration": "Declaration", "registration": "Registration",
+                    "report": "Report", "guidance": "Guidance", "form": "Form"}
+ENTITY_TYPES = ["fund", "spv", "gp", "trust", "company", "holdco"]
+OB_STATUS = ["not_started", "in_progress", "prepared", "filed", "confirmed", "na"]
+OB_STATUS_LABELS = {"not_started": "Not started", "in_progress": "In progress",
+                    "prepared": "Prepared", "filed": "Filed", "confirmed": "Confirmed",
+                    "na": "N/A"}
+OB_STATUS_COLOR = {"not_started": "#7a7a85", "in_progress": "#b06b00",
+                   "prepared": "#6b1766", "filed": "#1c7c44", "confirmed": "#1c7c44",
+                   "na": "#9a93a6"}
+
+
+def ob_status_badge(status):
+    s = status or "not_started"
+    col = OB_STATUS_COLOR.get(s, "#7a7a85")
+    return Span(OB_STATUS_LABELS.get(s, s),
+                style=f"display:inline-block;background:{col}22;color:{col};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
+ACTIVITY_OPTIONS = ["fund management", "holding", "finance & leasing",
+                    "headquartering", "intellectual property", "distribution & service centre"]
+# A few synthetic entities so the feature is demoable before real data is imported.
+SAMPLE_ENTITIES = [
+    {"name": "Aurora Global Fund SPC", "type": "fund", "domicile": "KY",
+     "jurisdictions": ["KY", "US"], "fy_end": "31 December",
+     "activities": ["fund management", "holding"], "client_ref": "JTC-0001"},
+    {"name": "Helios Holdings (Jersey) Ltd", "type": "holdco", "domicile": "JE",
+     "jurisdictions": ["JE"], "fy_end": "31 December",
+     "activities": ["holding"], "client_ref": "JTC-0002"},
+    {"name": "Lumen Private Equity GP Sàrl", "type": "gp", "domicile": "LU",
+     "jurisdictions": ["LU"], "fy_end": "31 December",
+     "activities": ["fund management"], "client_ref": "JTC-0003"},
+    {"name": "Meridian Trust", "type": "trust", "domicile": "GG",
+     "jurisdictions": ["GG"], "fy_end": "30 June",
+     "activities": ["holding"], "client_ref": "JTC-0004"},
+    {"name": "Atlas Infrastructure SCSp", "type": "fund", "domicile": "LU",
+     "jurisdictions": ["LU", "IE"], "fy_end": "31 December",
+     "activities": ["fund management", "finance & leasing"], "client_ref": "JTC-0005"},
+    {"name": "Pioneer Ventures (Cayman) Ltd", "type": "spv", "domicile": "KY",
+     "jurisdictions": ["KY"], "fy_end": "31 December",
+     "activities": ["holding"], "client_ref": "JTC-0006"},
+]
+
+SUGGESTIONS = [
+    "form: Cayman economic substance notification",
+    "Which form do I file for a Jersey company tax return?",
+    "law: what does CIGA mean?",
+    "What FATCA/CRS forms apply in Guernsey?",
+    "changes: recent changes in Jersey",
+]
+SHORTCUTS = [
+    ("form:", "Find the right tax form", "form: Cayman economic substance"),
+    ("law:", "Ask a tax-law question", "law: economic substance test"),
+    ("forms:", "List forms for a jurisdiction", "forms: KY"),
+    ("changes:", "Recent changes", "changes: JE"),
+    ("find:", "Free search of the corpus", "find: holding company"),
+]
+
+CSS = Style("""
+/* JTC Group brand palette (jtcgroup.com): purple #6B1766 / deep #550055 /
+   magenta accent #BA2A84 / slate text #48484F / light bg #F5F6F4 */
+:root{--navy:#6b1766;--navy2:#550055;--accent:#ba2a84;--bg:#f5f6f4;--line:#e6e3ec;
+--green:#1c7c44;--amber:#b06b00;--text:#48484f;--muted:#7a7a85;--panel:#fff;}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+color:var(--text);background:var(--bg);line-height:1.5}
+a{color:var(--navy2);text-decoration:none}a:hover{text-decoration:underline}
+.app{display:grid;grid-template-columns:280px 1fr 430px;height:100vh;overflow:hidden}
+.pane{height:100vh;overflow-y:auto}
+.left{background:var(--navy);color:#ece3ee;padding:0}
+.left .brand{font-weight:700;font-size:18px;color:#fff;padding:16px 18px;border-bottom:1px solid #45114a}
+.left .brand span{color:var(--accent)}
+.left a{color:#ece3ee;display:block}
+.section{padding:12px 16px;border-bottom:1px solid #45114a}
+.section .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#c9a3c6;margin-bottom:8px}
+.navlink{padding:6px 8px;border-radius:6px;font-size:14px}.navlink:hover{background:#7a2474;text-decoration:none}
+.newchat{display:block;background:var(--accent);color:#fff;text-align:center;font-weight:600;
+padding:9px;border-radius:8px;margin:12px 16px}
+.newchat:hover{text-decoration:none;filter:brightness(1.05)}
+details.tree{margin:2px 0}details.tree>summary{cursor:pointer;font-size:13px;padding:3px 0;list-style:none}
+details.tree>summary::-webkit-details-marker{display:none}
+details.tree>summary:before{content:"▸ ";color:#c9a3c6}details.tree[open]>summary:before{content:"▾ "}
+.tree .jur{font-weight:600;color:#f3e9f3}.tree .cat{margin-left:12px;color:#d8c5d6}
+.tree .typ{margin-left:24px;color:#c9a3c6;font-size:12px}
+.formlink{margin-left:30px;display:block;font-size:12.5px;color:#ece3ee;padding:2px 0;cursor:pointer}
+.formlink:hover{color:#fff}
+.shortcut{font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer}
+.shortcut:hover{background:#7a2474}.shortcut b{color:var(--accent);font-family:ui-monospace,monospace}
+.sess{font-size:13px;padding:4px 8px;border-radius:6px;display:block;color:#ece3ee}.sess:hover{background:#7a2474}
+/* center */
+.center{display:flex;flex-direction:column;background:#fbfcfd}
+/* centerdoc: scrollable document content (Navigate pages), not a chat column */
+.pane.centerdoc{display:block;overflow-y:auto;background:#fbfcfd}
+.centerdoc .wrap{max-width:920px;margin:0 auto;padding:26px 28px}
+/* copilot pane reuses .right; tighten chat spacing for the narrower column */
+.copilot-pane .msgs{padding:16px}
+.copilot-pane .composer{padding:12px 14px}
+.copilot-pane .scard{max-width:100%}
+.center .chead{padding:14px 22px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy)}
+.msgs{flex:1;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:14px}
+.bubble{max-width:760px;padding:12px 16px;border-radius:12px;font-size:14.5px;white-space:normal}
+.bubble.user{align-self:flex-end;background:var(--navy);color:#fff;border-bottom-right-radius:3px}
+.bubble.assistant{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:3px}
+.bubble.assistant pre{white-space:pre-wrap}
+.toolchip{display:inline-block;font-size:11px;background:#eef4fb;color:var(--navy2);border:1px solid #d6e3f1;
+border-radius:20px;padding:1px 9px;margin:2px 4px 2px 0}
+.cards{display:flex;flex-wrap:wrap;gap:8px;padding:8px 22px}
+.scard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:12.5px;
+cursor:pointer;max-width:340px}.scard:hover{border-color:var(--accent);color:var(--navy)}
+.composer{padding:14px 22px;border-top:1px solid var(--line);background:#fff;display:flex;gap:10px}
+.composer textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:10px;padding:11px;font:inherit;height:48px}
+.composer button{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:0 20px;font-weight:600;cursor:pointer}
+/* right */
+.right{background:#fff;border-left:1px solid var(--line);display:flex;flex-direction:column}
+.right .rhead{padding:13px 18px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy);
+display:flex;align-items:center;justify-content:space-between}
+.right .rhead .x{cursor:pointer;color:var(--muted)}
+.rbody{flex:1;overflow-y:auto;padding:14px 18px}
+.feed-item{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;
+padding:11px 13px;margin-bottom:11px;font-size:13px;cursor:pointer}
+.feed-item:hover{background:#fafbfc}.feed-item .meta{color:var(--muted);font-size:11.5px;margin-bottom:3px}
+.pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:10.5px;font-weight:600;text-transform:uppercase}
+.pill.new{background:#eaf5ee;color:var(--green)}.pill.amended{background:#fdf0e3;color:var(--amber)}
+iframe.pdf{width:100%;height:100%;border:none}
+.formmeta{font-size:13px}.formmeta dt{color:var(--muted);font-size:11px;text-transform:uppercase;margin-top:8px}
+.btn{display:inline-block;background:var(--navy);color:#fff;padding:9px 16px;border-radius:7px;font-size:14px}
+.form{background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px;max-width:380px;margin:60px auto}
+.form input{width:100%;padding:10px;border:1px solid var(--line);border-radius:7px;margin:6px 0 14px}
+.pwwrap{position:relative}
+.pwwrap input{padding-right:42px}
+.pweye{position:absolute;right:6px;top:13px;background:none;border:none;cursor:pointer;
+  font-size:17px;line-height:1;padding:4px;color:var(--muted)}
+.pweye:hover{color:var(--navy)}
+.wrap{max-width:1000px;margin:0 auto;padding:24px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line);font-size:13.5px}
+th{background:#fbfbfc;color:var(--muted);font-size:11px;text-transform:uppercase}
+/* Copilot drawer (collapsible chat on Navigate pages) */
+.cop-fab{position:fixed;right:20px;bottom:20px;z-index:50;background:var(--accent);color:#fff;
+border:none;border-radius:30px;padding:12px 18px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.cop-fab:hover{filter:brightness(1.05)}
+.cop{position:fixed;top:0;right:0;height:100vh;width:400px;max-width:92vw;background:#fff;
+border-left:1px solid var(--line);box-shadow:-6px 0 24px rgba(0,0,0,.10);z-index:60;
+display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
+.cop.open{transform:translateX(0)}
+.cop .chead{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:600;color:var(--navy);
+display:flex;align-items:center;justify-content:space-between}
+.cop .x{cursor:pointer;color:var(--muted);font-size:18px;line-height:1}
+.cop .msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.cop .composer{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.cop .composer textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:9px;padding:9px;font:inherit;height:42px}
+.cop .composer button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:600;cursor:pointer}
+.cop .scard{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12px;cursor:pointer;margin:3px 0}
+.cop .scard:hover{border-color:var(--accent);color:var(--navy)}
+/* W-8BEN-E facsimile (right-pane form editor) */
+.w8form{padding:6px 4px;font-size:12.5px}
+.w8title{border-bottom:2px solid var(--navy);padding-bottom:6px;margin-bottom:8px}
+.w8status{background:#faf7fc;border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-bottom:10px}
+.w8sec{display:flex;align-items:baseline;gap:8px;margin:12px 0 4px;border-bottom:1px solid var(--line);padding-bottom:3px}
+.w8part{font-weight:700;color:var(--navy);font-size:11px}
+.w8head{font-size:12px;color:var(--text)}
+.w8field{margin:7px 0}
+.w8frow{display:flex;align-items:center;gap:6px}
+.w8ln{color:var(--muted);font-size:10px;min-width:42px}
+.w8lbl{flex:1;font-size:11.5px;color:var(--text)}
+.w8badge{font-weight:700;font-size:13px}
+.w8inp{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;font-size:12px;margin-top:2px;background:#fff;transition:background .2s,border-color .2s}
+.w8inp:focus{outline:none;border-color:var(--accent)}
+.w8filling{background:#fff7e6;border-color:var(--amber)}
+.w8filled{background:#eaf5ee;border-color:var(--green)}
+.w8hint{font-size:10.5px;margin-top:2px;min-height:12px}
+.w8actions{margin:14px 0 4px}
+.w8stamp{display:none;margin-top:10px;background:#eaf5ee;color:#1c7c44;border:1px solid #b7e0c4;border-radius:8px;padding:8px 10px;font-weight:600}
+.teamchip{color:#ece3ee;font-size:13px;font-weight:600;padding:2px 0}
+.teamsel{width:100%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font:inherit;font-size:13px;cursor:pointer}
+.teamsel option{color:#1a1a1a}
+.rolepill{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600}
+.fb{margin-top:8px;display:flex;gap:4px}
+.fbb{background:none;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-size:13px;padding:2px 8px;line-height:1.3;transition:opacity .15s}
+.fbb:hover{border-color:var(--accent)}
+.fbb.chosen{border-color:var(--accent);background:#faf3f8}
+""")
+
+MARKED = Script(src="https://cdn.jsdelivr.net/npm/marked/marked.min.js")
+FAVICON = Link(rel="icon", type="image/svg+xml", href="/static/favicon.svg")
+PLOTLY = Script(src="https://cdn.plot.ly/plotly-2.35.2.min.js")
+VISNET = Script(src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js")
+
+# Colours for the Document Hierarchy tree (JTC palette).
+_HIER_LEAF = {"downloadable": "#ba2a84", "online": "#6b1766", "reference": "#8a7d92"}
+_HIER_BRANCH = {"jur": "#550055", "cat": "#9c5797", "typ": "#c9a3c6"}
+
+
+def current_user(sess):
+    return sess.get("uid") if sess else None
+
+
+def user_email(sess):
+    return sess.get("email", "") if sess else ""
+
+
+def require(sess):
+    if LOGIN_REQUIRED and not current_user(sess):
+        return RedirectResponse("/login", status_code=303)
+    return None
+
+
+def is_admin(sess):
+    """True if the signed-in user is a global platform admin."""
+    return bool(sess) and sess.get("role") == "admin"
+
+
+def admin_only(sess):
+    """Gate for admin-only routes. Returns a redirect/response if not allowed."""
+    if LOGIN_REQUIRED and not current_user(sess):
+        return RedirectResponse("/login", status_code=303)
+    if LOGIN_REQUIRED and not is_admin(sess):
+        return Page(sess, H1("Not authorised"),
+                    P("This area is for administrators.", cls="muted"),
+                    title="Forbidden · TaxHub")
+    return None
+
+
+def is_team_admin(sess, team_id):
+    """True if the user is a global admin or an admin of ``team_id``."""
+    if is_admin(sess):
+        return True
+    uid = current_user(sess)
+    return bool(uid and team_id and store.team_role(team_id, uid) == "admin")
+
+
+def teams_i_admin(sess):
+    """Teams the user may administer: all of them for a global admin, else the
+    teams where they hold the team-admin role."""
+    if is_admin(sess):
+        return store.list_teams()
+    uid = current_user(sess)
+    return [t for t in (store.list_teams_for_user(uid) if uid else [])
+            if t.get("role") == "admin"]
+
+
+def can_invite(sess):
+    return is_admin(sess) or bool(teams_i_admin(sess))
+
+
+def active_team_id(sess):
+    """The team whose client data the user is currently viewing."""
+    return sess.get("team_id") if sess else None
+
+
+def team_scope(sess):
+    """team_id to filter client data (entities/obligations/chats) by. When
+    LOGIN_REQUIRED is off (public/dev), returns None so everything is visible."""
+    if not LOGIN_REQUIRED:
+        return None
+    return active_team_id(sess)
+
+
+def establish_session(sess, user_id, email):
+    """Populate the session after a successful login (password or OAuth):
+    uid, email, global role, name, and the active team (first team joined)."""
+    sess["uid"] = user_id
+    sess["email"] = email
+    u = store.get_user(user_id) or {}
+    sess["role"] = u.get("role") or "user"
+    sess["name"] = u.get("name") or (email.split("@")[0] if email else "")
+    teams = store.list_teams_for_user(user_id)
+    sess["team_id"] = teams[0]["id"] if teams else None
+    sess["team_name"] = teams[0]["name"] if teams else ""
+
+
+app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "taxhub-2026"),
+                   pico=False)
+
+
+# ── Google OAuth (optional — enabled when client id + secret are set) ─────────
+# Mirrors the sister LiquidRound app: OIDC via Authlib, /auth/google →
+# Google consent → /auth/callback. The OAuth client lives in the "finespresso"
+# GCP project. If GOOGLE_ALLOWED_DOMAINS is set (comma-separated, e.g.
+# "jtcgroup.com"), only those email domains may sign in — existing accounts
+# (e.g. the seeded admin) are always allowed. Unset ⇒ any Google account.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in os.environ.get("GOOGLE_ALLOWED_DOMAINS", "").split(",") if d.strip()
+]
+OAUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+_oauth = None
+if OAUTH_ENABLED:
+    from authlib.integrations.starlette_client import OAuth as _AuthlibOAuth
+    _oauth = _AuthlibOAuth()
+    _oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+_GOOGLE_SVG = ('<svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:-4px;'
+               'margin-right:9px"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844'
+               'c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 '
+               '2.684-6.615z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908'
+               '-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 '
+               '8.997 0 009 18z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593'
+               '.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9s.38 1.572.957 3.042l3.007-2.332z" '
+               'fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 '
+               '11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" '
+               'fill="#EA4335"/></svg>')
+
+
+def _google_button():
+    """'Continue with Google' button + an 'or' divider, for the login form."""
+    return Div(
+        Div(
+            Span(style="flex:1;height:1px;background:var(--line)"),
+            Span("or", style="color:#9aa3ab;font-size:12px;padding:0 10px"),
+            Span(style="flex:1;height:1px;background:var(--line)"),
+            style="display:flex;align-items:center;margin:18px 0 14px"),
+        A(NotStr(_GOOGLE_SVG), "Continue with Google", href="/auth/google",
+          style="display:flex;align-items:center;justify-content:center;width:100%;"
+                "padding:10px;border:1px solid var(--line);border-radius:7px;"
+                "color:var(--text);font-size:14px;font-weight:600;text-decoration:none;"
+                "background:#fff"))
+
+
+@rt("/health")
+def health():
+    return JSONResponse({"status": "ok"})
+
+
+
+
+@rt("/login", methods=["GET"])
+def login_form(sess, error: str = ""):
+    return Title("Sign in · TaxHub"), CSS, Form(
+        H2("TaxHub Demo"), P("Sign in", style="color:#6b7686"),
+        (P(error, style="color:#c0392b") if error else ""),
+        Input(name="email", placeholder="Email", type="email"),
+        Div(
+            Input(name="password", placeholder="Password", type="password", id="pw"),
+            Button("👁", type="button", cls="pweye", id="pweye",
+                   onclick="togglePw(this)", aria_label="Show password",
+                   aria_pressed="false"),
+            cls="pwwrap"),
+        Button("Sign in", cls="btn", style="width:100%"),
+        Script("function togglePw(b){var i=document.getElementById('pw');"
+               "var s=i.type==='password';i.type=s?'text':'password';"
+               "b.textContent=s?'🙈':'👁';"
+               "b.setAttribute('aria-label',s?'Hide password':'Show password');"
+               "b.setAttribute('aria-pressed',s?'true':'false');i.focus();}"),
+        (_google_button() if OAUTH_ENABLED else ""),
+        method="post", action="/login", cls="form")
+
+
+# Simple in-memory login throttle: max N failures per email per window.
+_LOGIN_FAILS: dict = {}
+_LOGIN_MAX = 8
+_LOGIN_WINDOW = 300  # seconds
+
+
+def _login_blocked(email: str, now: float) -> bool:
+    hits = [t for t in _LOGIN_FAILS.get(email, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[email] = hits
+    return len(hits) >= _LOGIN_MAX
+
+
+@rt("/login", methods=["POST"])
+def login_submit(sess, email: str = "", password: str = ""):
+    import bcrypt
+    import time
+    email_n = (email or "").strip().lower()
+    now = time.time()
+    if _login_blocked(email_n, now):
+        return RedirectResponse("/login?error=Too+many+attempts.+Try+again+in+a+few+minutes",
+                                status_code=303)
+    user = store.get_user_by_email(email_n)
+    if user and user["password_hash"] and bcrypt.checkpw(
+            password.encode(), user["password_hash"].encode()):
+        _LOGIN_FAILS.pop(email_n, None)
+        establish_session(sess, user["id"], user.get("email") or email_n)
+        return RedirectResponse("/", status_code=303)
+    _LOGIN_FAILS.setdefault(email_n, []).append(now)
+    return RedirectResponse("/login?error=Invalid+credentials", status_code=303)
+
+
+@rt("/logout")
+def logout(sess):
+    sess.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+def _role_pill(role):
+    col = "#6b1766" if role == "admin" else "#1c7c44" if role == "member" else "#7a7a85"
+    return Span(role or "member", cls="rolepill",
+               style=f"background:{col}22;color:{col}")
+
+
+# ── Team switching ───────────────────────────────────────────────────────────
+@rt("/switch-team")
+def switch_team(sess, team_id: int = 0):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    teams = store.list_teams_for_user(current_user(sess))
+    match = next((t for t in teams if t["id"] == team_id), None)
+    if match:
+        sess["team_id"] = match["id"]
+        sess["team_name"] = match["name"]
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+# ── My profile ───────────────────────────────────────────────────────────────
+@rt("/profile", methods=["GET"])
+def profile(sess, saved: str = ""):
+    if (r := require(sess)):
+        return r
+    uid = current_user(sess)
+    u = store.get_user(uid) or {}
+    teams = store.list_teams_for_user(uid)
+    return Page(sess,
+        H1("My profile"),
+        (P("✓ Saved.", style="color:#1c7c44") if saved else ""),
+        Dl(Dt("Email"), Dd(u.get("email") or "—"),
+           Dt("Global role"), Dd(_role_pill(u.get("role"))),
+           Dt("Teams"), Dd(*[Span(f"{t['name']} ", _role_pill(t["role"]),
+                                   style="margin-right:10px") for t in teams] or ["—"]),
+           cls="formmeta"),
+        H2("Update details"),
+        Form(
+            Div(Label("Display name", style="font-size:13px;color:var(--muted)"),
+                Input(name="name", value=u.get("name") or "", style="width:100%"),
+                style="margin:6px 0"),
+            Div(Label("New password (leave blank to keep)", style="font-size:13px;color:var(--muted)"),
+                Input(name="password", type="password", placeholder="••••••••", style="width:100%"),
+                style="margin:6px 0"),
+            Button("Save", cls="btn", style="margin-top:8px"),
+            method="post", action="/profile"),
+        title="Profile · TaxHub")
+
+
+@rt("/profile", methods=["POST"])
+def profile_save(sess, name: str = "", password: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    uid = current_user(sess)
+    if name.strip():
+        store.update_user_name(uid, name.strip())
+        sess["name"] = name.strip()
+    if password.strip():
+        if len(password) < 8:
+            return RedirectResponse("/profile?saved=0", status_code=303)
+        import bcrypt
+        store.set_user_password(uid, bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
+    return RedirectResponse("/profile?saved=1", status_code=303)
+
+
+# ── Admin: users ─────────────────────────────────────────────────────────────
+@rt("/admin/users")
+def admin_users(sess):
+    if (r := admin_only(sess)):
+        return r
+    users = store.list_users()
+    teams = store.list_teams()
+    team_opts = {t["id"]: t["name"] for t in teams}
+
+    def urow(u):
+        ut = store.list_teams_for_user(u["id"])
+        role_form = Form(
+            Select(*[Option(rl.capitalize(), value=rl, selected=(rl == u.get("role")))
+                     for rl in ("admin", "user")], name="role", onchange="this.form.submit()",
+                   style="padding:3px 6px;border:1px solid var(--line);border-radius:6px"),
+            Input(type="hidden", name="user_id", value=str(u["id"])),
+            method="post", action="/admin/users/role", style="display:inline")
+        add_form = Form(
+            Select(*[Option(t["name"], value=str(t["id"])) for t in teams], name="team_id",
+                   style="padding:3px 6px;border:1px solid var(--line);border-radius:6px"),
+            Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+                   name="role", style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;margin:0 4px"),
+            Input(type="hidden", name="user_id", value=str(u["id"])),
+            Button("+ Add", cls="btn", style="padding:3px 9px;font-size:12px"),
+            method="post", action="/admin/teams/member", style="display:inline")
+        return Tr(Td(u.get("email")), Td(u.get("name") or "—"), Td(role_form),
+                  Td(*[Span(f"{t['name']} ", _role_pill(t["role"]), style="margin-right:6px")
+                       for t in ut] or ["—"]),
+                  Td(add_form))
+    return Page(sess,
+        H1("Users"),
+        P(f"{len(users)} users. Set a user's global role (admin can manage users & "
+          "teams) or add them to a team.", cls="muted"),
+        P(A("✉ Invite a new user", href="/admin/invite", cls="btn")),
+        Table(Tr(Th("Email"), Th("Name"), Th("Global role"), Th("Teams"), Th("Add to team")),
+              *[urow(u) for u in users]),
+        title="Users · TaxHub")
+
+
+@rt("/admin/users/role", methods=["POST"])
+def admin_set_role(sess, user_id: int = 0, role: str = ""):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if role in ("admin", "user") and user_id:
+        store.set_user_role(user_id, role)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+# ── Admin: teams ─────────────────────────────────────────────────────────────
+@rt("/admin/teams")
+def admin_teams(sess, created: str = ""):
+    if (r := admin_only(sess)):
+        return r
+    teams = store.list_teams()
+    rows = [Tr(Td(A(t["name"], href=f"/admin/teams/{t['id']}")),
+               Td(str(t.get("members", 0))), Td(str(t.get("entities", 0))),
+               Td(t.get("created_at", "")[:10]))
+            for t in teams]
+    return Page(sess,
+        H1("Teams"),
+        (P("✓ Team created.", style="color:#1c7c44") if created else ""),
+        P("Each team is an isolated workspace — its entities, obligations and chats "
+          "are private to its members. The tax-law corpus is shared across all teams.",
+          cls="muted"),
+        Form(Input(name="name", placeholder="New team name", required=True,
+                   style="padding:7px;border:1px solid var(--line);border-radius:7px;width:50%"),
+             Button("Create team", cls="btn", style="margin-left:6px"),
+             method="post", action="/admin/teams/create", style="margin:12px 0"),
+        Table(Tr(Th("Team"), Th("Members"), Th("Entities"), Th("Created")), *rows),
+        title="Teams · TaxHub")
+
+
+@rt("/admin/teams/create", methods=["POST"])
+def admin_team_create(sess, name: str = ""):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    if name.strip():
+        store.create_team(name.strip())
+    return RedirectResponse("/admin/teams?created=1", status_code=303)
+
+
+@rt("/admin/teams/{team_id}")
+def admin_team_detail(sess, team_id: int):
+    if (r := require(sess)):
+        return r
+    if not is_team_admin(sess, team_id):
+        return Page(sess, H1("Not authorised"),
+                    P("You must be an admin of this team.", cls="muted"))
+    t = store.get_team(team_id)
+    if not t:
+        return Page(sess, H1("Team not found"))
+    back = "/admin/teams" if is_admin(sess) else "/"
+    members = store.list_team_members(team_id)
+    member_ids = {m["user_id"] for m in members}
+    non_members = [u for u in store.list_users() if u["id"] not in member_ids]
+
+    def mrow(m):
+        rm = Form(Input(type="hidden", name="user_id", value=str(m["user_id"])),
+                  Input(type="hidden", name="team_id", value=str(team_id)),
+                  Button("Remove", cls="btn", style="background:#b0353a;padding:2px 9px;font-size:12px"),
+                  method="post", action="/admin/teams/member/remove", style="display:inline")
+        return Tr(Td(m["email"]), Td(m.get("name") or "—"), Td(_role_pill(m["role"])), Td(rm))
+    add = Form(
+        Select(*[Option(f"{u['email']}", value=str(u["id"])) for u in non_members],
+               name="user_id", style="padding:5px;border:1px solid var(--line);border-radius:6px"),
+        Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+               name="role", style="padding:5px;border:1px solid var(--line);border-radius:6px;margin:0 4px"),
+        Input(type="hidden", name="team_id", value=str(team_id)),
+        Button("Add member", cls="btn"),
+        method="post", action="/admin/teams/member") if non_members else P("All users are members.", cls="muted")
+    return Page(sess,
+        H1(t["name"]),
+        P(A("← Back", href=back), cls="muted"),
+        H2("Members"),
+        Table(Tr(Th("Email"), Th("Name"), Th("Team role"), Th("")), *[mrow(m) for m in members]),
+        H2("Add a member"), add,
+        title=f"{t['name']} · TaxHub")
+
+
+@rt("/admin/teams/member", methods=["POST"])
+def admin_team_add_member(sess, team_id: int = 0, user_id: int = 0, role: str = "member"):
+    if (require(sess)) or not is_team_admin(sess, team_id):
+        return RedirectResponse("/login", status_code=303)
+    if team_id and user_id:
+        store.add_team_member(team_id, user_id, role if role in ("admin", "member") else "member")
+    return RedirectResponse(f"/admin/teams/{team_id}", status_code=303)
+
+
+@rt("/admin/teams/member/remove", methods=["POST"])
+def admin_team_remove_member(sess, team_id: int = 0, user_id: int = 0):
+    if (require(sess)) or not is_team_admin(sess, team_id):
+        return RedirectResponse("/login", status_code=303)
+    if team_id and user_id:
+        store.remove_team_member(team_id, user_id)
+    return RedirectResponse(f"/admin/teams/{team_id}", status_code=303)
+
+
+# ── Admin: invites (Postmark) ────────────────────────────────────────────────
+def _base_url(request):
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    return f"{scheme}://{host}"
+
+
+@rt("/admin/invite", methods=["GET"])
+def admin_invite(sess, sent: str = "", err: str = "", revoked: str = ""):
+    if (r := require(sess)):
+        return r
+    if not can_invite(sess):
+        return Page(sess, H1("Not authorised"),
+                    P("Only team admins can invite users.", cls="muted"))
+    teams = teams_i_admin(sess)
+    team_ids = {t["id"] for t in teams}
+    cur = active_team_id(sess)
+    all_teams = {t["id"]: t["name"] for t in store.list_teams()}
+    # A team admin only sees invites for teams they administer.
+    recent = [i for i in store.list_invites()
+              if is_admin(sess) or i.get("team_id") in team_ids][:15]
+
+    def irow(i):
+        used = i.get("used_at")
+        status = (Span("✓ accepted", style="color:#1c7c44") if used else Span("pending", cls="muted"))
+        actions = "" if used else Span(
+            Form(Input(type="hidden", name="email", value=i.get("email")),
+                 Input(type="hidden", name="team_id", value=str(i.get("team_id") or "")),
+                 Input(type="hidden", name="role", value=i.get("role") or "member"),
+                 Button("Resend", cls="btn", style="padding:2px 8px;font-size:11px"),
+                 method="post", action="/admin/invite", style="display:inline"),
+            Form(Input(type="hidden", name="invite_id", value=str(i.get("id"))),
+                 Button("Revoke", cls="btn", style="padding:2px 8px;font-size:11px;background:#b0353a;margin-left:4px"),
+                 method="post", action="/admin/invite/revoke", style="display:inline"))
+        return Tr(Td(i.get("email")), Td(_role_pill(i.get("role"))),
+                  Td(all_teams.get(i.get("team_id"), "—")),
+                  Td(status), Td((i.get("created_at") or "")[:10]), Td(actions))
+    return Page(sess,
+        H1("Invite a user"),
+        (P("✓ Invitation sent.", style="color:#1c7c44") if sent else ""),
+        (P("✓ Invitation revoked.", style="color:#1c7c44") if revoked else ""),
+        (P(f"⚠ {err}", style="color:#c0392b") if err else ""),
+        P("Send a branded email invite. The recipient sets a password (or signs in "
+          "with Google) and joins the chosen team.", cls="muted"),
+        Form(
+            Div(Input(name="email", type="email", placeholder="person@firm.com",
+                      required=True, style="padding:8px;border:1px solid var(--line);border-radius:7px;width:46%"),
+                Select(*[Option(t["name"], value=str(t["id"]), selected=(t["id"] == cur))
+                         for t in teams], name="team_id",
+                       style="padding:8px;border:1px solid var(--line);border-radius:7px;margin:0 6px"),
+                Select(*[Option(rl.capitalize(), value=rl) for rl in ("member", "admin")],
+                       name="role", style="padding:8px;border:1px solid var(--line);border-radius:7px"),
+                style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"),
+            Button("✉ Send invitation", cls="btn", style="margin-top:10px"),
+            method="post", action="/admin/invite"),
+        H2("Recent invitations"),
+        (Table(Tr(Th("Email"), Th("Role"), Th("Team"), Th("Status"), Th("Sent"), Th("")),
+               *[irow(i) for i in recent]) if recent else P("None yet.", cls="muted")),
+        title="Invite · TaxHub")
+
+
+@rt("/admin/invite/revoke", methods=["POST"])
+def admin_invite_revoke(sess, invite_id: int = 0):
+    if (require(sess)) or not can_invite(sess):
+        return RedirectResponse("/login", status_code=303)
+    if invite_id:
+        store.delete_invite(invite_id)
+    return RedirectResponse("/admin/invite?revoked=1", status_code=303)
+
+
+@rt("/admin/invite", methods=["POST"])
+def admin_invite_send(sess, request, email: str = "", team_id: int = 0, role: str = "member"):
+    if (require(sess)) or not can_invite(sess):
+        return RedirectResponse("/login", status_code=303)
+    # A team admin may only invite into teams they administer.
+    if not is_admin(sess) and team_id not in {t["id"] for t in teams_i_admin(sess)}:
+        return RedirectResponse("/admin/invite?err=Not+an+admin+of+that+team", status_code=303)
+    import secrets
+    from datetime import datetime, timedelta, timezone
+    email = (email or "").strip().lower()
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return RedirectResponse("/admin/invite?err=Enter+a+valid+email", status_code=303)
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(timespec="seconds")
+    store.create_invite(email, team_id or None, role if role in ("admin", "member") else "member",
+                        token, current_user(sess), expires)
+    team = store.get_team(team_id) if team_id else None
+    team_name = team["name"] if team else "TaxHub"
+    invite_url = f"{_base_url(request)}/invite/{token}"
+    res = mailer.send_email(
+        to=email, tag="invite",
+        subject=f"You're invited to {team_name} on TaxHub",
+        html_body=mailer.invite_email_html(invite_url=invite_url, team_name=team_name,
+                                           inviter=user_email(sess), role=role),
+        text_body=mailer.invite_email_text(invite_url=invite_url, team_name=team_name,
+                                           inviter=user_email(sess), role=role))
+    if res.get("error") or (res.get("ErrorCode", 0) not in (0, None) and not res.get("skipped")):
+        return RedirectResponse("/admin/invite?err=Email+failed+(check+Postmark+sender)",
+                                status_code=303)
+    return RedirectResponse("/admin/invite?sent=1", status_code=303)
+
+
+@rt("/invite/{token}", methods=["GET"])
+def invite_accept(sess, token: str, err: str = ""):
+    inv = store.get_invite_by_token(token)
+    msg = None
+    if not inv:
+        msg = "This invitation link is not valid."
+    elif inv.get("used_at"):
+        msg = "This invitation has already been used. Please sign in."
+    else:
+        from datetime import datetime, timezone
+        try:
+            if datetime.fromisoformat(inv["expires_at"]) < datetime.now(timezone.utc):
+                msg = "This invitation has expired. Ask your admin to resend it."
+        except Exception:  # noqa: BLE001
+            pass
+    if msg:
+        return (Title("Invitation · TaxHub"), CSS,
+                Div(H2("TaxHub"), P(msg, style="color:#c0392b"),
+                    P(A("Go to sign in →", href="/login")), cls="form"))
+    team = store.get_team(inv["team_id"]) if inv.get("team_id") else None
+    team_name = team["name"] if team else "TaxHub"
+    return (Title("Accept invitation · TaxHub"), CSS, Form(
+        H2("TaxHub"),
+        P(f"Join {team_name}", style="color:#6b7686"),
+        (P(err, style="color:#c0392b") if err else ""),
+        P(f"Invited as {inv['email']} ({inv.get('role')})",
+          style="font-size:13px;color:#6b7686"),
+        Input(name="name", placeholder="Your name", value=inv["email"].split("@")[0]),
+        Input(name="password", placeholder="Choose a password", type="password", required=True),
+        Button("Accept & sign in", cls="btn", style="width:100%"),
+        (_google_button() if OAUTH_ENABLED else ""),
+        method="post", action=f"/invite/{token}", cls="form"))
+
+
+@rt("/invite/{token}", methods=["POST"])
+def invite_accept_post(sess, token: str, name: str = "", password: str = ""):
+    inv = store.get_invite_by_token(token)
+    if not inv or inv.get("used_at"):
+        return RedirectResponse("/login?error=Invitation+not+valid", status_code=303)
+    if len(password) < 8:
+        return RedirectResponse(f"/invite/{token}?err=Password+must+be+8%2B+characters",
+                                status_code=303)
+    import bcrypt
+    email = inv["email"].strip().lower()
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    user = store.get_or_create_oauth_user(email, name.strip() or email.split("@")[0])
+    store.set_user_password(user["id"], pw_hash)
+    if name.strip():
+        store.update_user_name(user["id"], name.strip())
+    if inv.get("team_id"):
+        store.add_team_member(inv["team_id"], user["id"],
+                              inv.get("role") if inv.get("role") in ("admin", "member") else "member")
+    store.mark_invite_used(token)
+    establish_session(sess, user["id"], email)
+    return RedirectResponse("/", status_code=303)
+
+
+# ── Admin: chat analytics + evals ────────────────────────────────────────────
+def _metric_card(label, value, color="var(--navy)"):
+    return Div(Div(str(value), style=f"font-size:26px;font-weight:700;color:{color}"),
+               Div(label, style="color:var(--muted);font-size:12px"),
+               style="flex:1;min-width:120px;background:#fff;border:1px solid var(--line);"
+                     "border-radius:10px;padding:12px 14px")
+
+
+@rt("/admin/analytics", methods=["GET"])
+def admin_analytics(sess, scope: str = "team", judged: str = ""):
+    if (r := admin_only(sess)):
+        return r
+    # Admins can view their team's chats or the whole platform.
+    tid = None if scope == "all" else active_team_id(sess)
+    summ = store.chat_analytics(team_id=tid)
+    turns = store.list_chat_turns(team_id=tid, limit=200)
+    vcol = {"good": "#1c7c44", "fair": "#b06b00", "poor": "#c0392b"}
+
+    def trow(t):
+        rating = t.get("rating")
+        thumb = "👍" if rating == 1 else "👎" if rating == -1 else "—"
+        jv = t.get("judge_verdict")
+        judge = (Span(f"{t.get('judge_score')}/5 {jv}", style=f"color:{vcol.get(jv, '#7a7a85')};font-weight:600")
+                 if t.get("judge_score") is not None else Span("—", cls="muted"))
+        return Tr(Td((t.get("question") or "—")[:70]),
+                  Td((t.get("answer") or "")[:90], style="color:var(--muted);font-size:12px"),
+                  Td(thumb, style="text-align:center"),
+                  Td(judge),
+                  Td((t.get("judge_reason") or "")[:80], style="color:var(--muted);font-size:11px"),
+                  Td((t.get("user_email") or "—"), style="font-size:11px"))
+    avg = summ.get("avg_judge")
+    cards = Div(
+        _metric_card("Turns", summ["turns"]),
+        _metric_card("Sessions", summ["sessions"]),
+        _metric_card("Users", summ["users"]),
+        _metric_card("👍", summ["thumbs_up"], "#1c7c44"),
+        _metric_card("👎", summ["thumbs_down"], "#c0392b"),
+        _metric_card("Judge avg", f"{avg}/5" if avg is not None else "—"),
+        _metric_card("Judged", summ["judged"]),
+        style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 0")
+    toggle = Div(
+        A("My team", href="/admin/analytics?scope=team",
+          cls="btn" if scope != "all" else "", style="margin-right:6px"),
+        A("All teams", href="/admin/analytics?scope=all",
+          cls="btn" if scope == "all" else ""),
+        Form(Button("⚖ Run LLM judge on new turns", cls="btn",
+                    style="background:#6b1766;margin-left:10px"),
+             method="post", action=f"/admin/judge-run?scope={scope}", style="display:inline"),
+        style="margin:8px 0")
+    return Page(sess,
+        H1("Chat analytics & evals"),
+        P("Every assistant reply is logged. Users rate replies 👍/👎, and an "
+          "LLM-as-judge (Grok) scores quality (relevance, groundedness, completeness). "
+          "Offline ground-truth evals live separately in the repo's evals/.", cls="muted"),
+        (P(f"✓ Judged {judged} new turn(s).", style="color:#1c7c44") if judged else ""),
+        cards, toggle,
+        H2("Recent turns"),
+        (Table(Tr(Th("Question"), Th("Answer"), Th("Vote"), Th("Judge"), Th("Why"), Th("User")),
+               *[trow(t) for t in turns]) if turns
+         else P("No chat turns logged yet.", cls="muted")),
+        title="Chat analytics · TaxHub")
+
+
+@rt("/admin/judge-run", methods=["POST"])
+def admin_judge_run(sess, scope: str = "team"):
+    if (admin_only(sess) is not None) and not is_admin(sess):
+        return RedirectResponse("/login", status_code=303)
+    tid = None if scope == "all" else active_team_id(sess)
+    res = chat_eval.run_judge(store, team_id=tid, limit=25)
+    return RedirectResponse(f"/admin/analytics?scope={scope}&judged={res['judged']}",
+                            status_code=303)
+
+
+@rt("/admin/events", methods=["GET"])
+def admin_events(sess, scope: str = "team"):
+    if (r := admin_only(sess)):
+        return r
+    tid = None if scope == "all" else active_team_id(sess)
+    events = store.list_events(limit=300, team_id=tid)
+    rows = [Tr(Td((e.get("created_at") or "")[:19].replace("T", " ")),
+               Td(Code(e.get("type") or "", style="font-size:11px")),
+               Td(e.get("user_email") or "—"),
+               Td((e.get("data") or "")[:90], style="color:var(--muted);font-size:12px"))
+            for e in events]
+    return Page(sess,
+        H1("Audit log"),
+        P("Append-only record of platform activity — logins, invites, chat turns "
+          "and feedback. Useful for support and compliance.", cls="muted"),
+        Div(A("My team", href="/admin/events?scope=team",
+              cls="btn" if scope != "all" else "", style="margin-right:6px"),
+            A("All teams", href="/admin/events?scope=all",
+              cls="btn" if scope == "all" else ""), style="margin:8px 0"),
+        (Table(Tr(Th("When (UTC)"), Th("Event"), Th("User"), Th("Detail")), *rows)
+         if rows else P("No events yet.", cls="muted")),
+        title="Audit log · TaxHub")
+
+
+# ── Google OAuth: redirect to Google, then handle the callback ────────────────
+if OAUTH_ENABLED:
+    def _redirect_uri(request):
+        # Honour the proxy (Coolify/Traefik terminates TLS) so the callback URL
+        # matches the https:// URI registered in the GCP OAuth client.
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("host", request.url.netloc)
+        return f"{scheme}://{host}/auth/callback"
+
+    @rt("/auth/google", methods=["GET"])
+    async def google_login(request):
+        return await _oauth.google.authorize_redirect(request, _redirect_uri(request))
+
+    @rt("/auth/callback", methods=["GET"])
+    async def google_callback(request, sess):
+        try:
+            token = await _oauth.google.authorize_access_token(request)
+        except Exception:
+            return RedirectResponse("/login?error=Google+sign-in+failed", status_code=303)
+        info = token.get("userinfo") or {}
+        email = (info.get("email") or "").strip().lower()
+        if not email or not info.get("email_verified", True):
+            return RedirectResponse("/login?error=Google+did+not+return+a+verified+email",
+                                    status_code=303)
+        # Optional domain allow-list; existing users are always allowed in.
+        if (GOOGLE_ALLOWED_DOMAINS and email.split("@")[-1] not in GOOGLE_ALLOWED_DOMAINS
+                and not store.get_user_by_email(email)):
+            return RedirectResponse("/login?error=This+Google+account+is+not+permitted",
+                                    status_code=303)
+        user = store.get_or_create_oauth_user(email, info.get("name"))
+        # New OAuth users land in the default team so they're never team-less.
+        if not store.list_teams_for_user(user["id"]):
+            teams = store.list_teams()
+            if teams:
+                store.add_team_member(teams[0]["id"], user["id"], "member")
+        establish_session(sess, user["id"], user["email"])
+        return RedirectResponse("/", status_code=303)
+
+
+# ── Admin: refresh the forms catalogue (scrape) from inside the container ──────
+# Runs the same scrape as `python -m ingest.cli --forms`, but in-process so the
+# downloaded PDFs land on the persistent /app/data volume and metadata is written
+# to the live store. Gated by a session OR the APP_SECRET token (for curl/ops).
+# Long-running, so it runs in a daemon thread; poll /admin/refresh-status.
+_REFRESH = {"running": False, "done": False, "log": [], "summary": None}
+
+
+def _admin_ok(sess, request) -> bool:
+    """Allow a logged-in session, or an X-Admin-Token header matching APP_SECRET.
+    The token is read from a header (not the URL) so it never lands in access logs."""
+    if require(sess) is None:
+        return True
+    tok = request.headers.get("x-admin-token", "") if request is not None else ""
+    return bool(tok) and tok == os.environ.get("APP_SECRET", "taxhub-2026")
+
+
+def _run_refresh(jurisdiction):
+    from ingest.forms import scrape_forms, load_catalogue
+    _REFRESH.update(running=True, done=False, log=[], summary=None)
+    try:
+        codes = [jurisdiction] if jurisdiction else list(load_catalogue())
+        agg = {"recorded": 0, "downloaded": 0, "portal": 0, "failed_downloads": 0}
+        for c in codes:
+            r = scrape_forms(c, download=True)
+            for k in agg:
+                agg[k] += r.get(k, 0)
+            _REFRESH["log"].append(
+                f"{c}: recorded={r['recorded']} downloaded={r['downloaded']} "
+                f"portal={r['portal']} failed={r['failed_downloads']}")
+        prov = store.build_provenance_edges()        # keep IMPLEMENTS edges fresh
+        _REFRESH["log"].append(f"provenance: {prov}")
+        _REFRESH["summary"] = agg
+    except Exception as e:  # noqa: BLE001
+        _REFRESH["log"].append(f"ERROR: {e!r}")
+    finally:
+        _REFRESH.update(running=False, done=True)
+
+
+@rt("/admin/refresh-forms", methods=["POST"])
+def refresh_forms(sess, request, jurisdiction: str = ""):
+    import threading
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if _REFRESH["running"]:
+        return JSONResponse({"status": "already running", **_REFRESH})
+    threading.Thread(target=_run_refresh, args=(jurisdiction or None,),
+                     daemon=True).start()
+    return JSONResponse({"status": "started", "jurisdiction": jurisdiction or "ALL"})
+
+
+@rt("/admin/refresh-status")
+def refresh_status(sess, request):
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(_REFRESH)
+
+
+@rt("/admin/build-provenance", methods=["POST"])
+def build_provenance(sess, request):
+    """One-shot: persist Form.legislation_ref → (:Form)-[:IMPLEMENTS]->(:Legislation)
+    edges (+ SOURCED_FROM to tracked Documents). Idempotent."""
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(store.build_provenance_edges())
+
+
+# ── 3-pane components ───────────────────────────────────────────────────────
+def tree_component():
+    nodes = []
+    for j in forms_tree():
+        cats = []
+        for c in j["categories"]:
+            types = []
+            for t in c["types"]:
+                forms = [Div(f["title"], cls="formlink",
+                             onclick=f"openForm({f['id']})") for f in t["forms"]]
+                types.append(Details(Summary(t["form_type"], cls="typ"), *forms, cls="tree"))
+            cats.append(Details(Summary(CATEGORY_LABELS.get(c["category"], c["category"]),
+                                        cls="cat"), *types, cls="tree"))
+        nodes.append(Details(Summary(JUR_NAMES.get(j["code"], j["code"]), cls="jur"),
+                             *cats, cls="tree"))
+    return Div(*nodes)
+
+
+def team_switcher(sess):
+    """Active-team chip + a switcher when the user belongs to more than one team."""
+    uid = current_user(sess)
+    if not uid:
+        return ""
+    teams = store.list_teams_for_user(uid)
+    if not teams:
+        return ""
+    cur = active_team_id(sess)
+    cur_name = next((t["name"] for t in teams if t["id"] == cur), teams[0]["name"])
+    if len(teams) <= 1:
+        return Div(Div("Team", cls="lbl"),
+                   Div(f"🏢 {cur_name}", cls="teamchip"), cls="section")
+    return Div(Div("Team", cls="lbl"),
+        Select(*[Option(t["name"], value=str(t["id"]), selected=(t["id"] == cur))
+                 for t in teams],
+               onchange="location='/switch-team?team_id='+this.value", cls="teamsel"),
+        cls="section")
+
+
+def left_pane(sess):
+    sessions = (store.list_chat_sessions(user_email(sess), limit=15,
+                                         team_id=active_team_id(sess))
+                if user_email(sess) else [])
+    admin_links = []
+    if is_admin(sess):
+        admin_links = [A("👤 Users", href="/admin/users", cls="navlink"),
+                       A("🏢 Teams", href="/admin/teams", cls="navlink"),
+                       A("📊 Chat analytics", href="/admin/analytics", cls="navlink"),
+                       A("📜 Audit log", href="/admin/events", cls="navlink")]
+    elif teams_i_admin(sess):  # team admin (not global): manage their own team
+        admin_links = [A(f"🏢 Manage {t['name']}", href=f"/admin/teams/{t['id']}",
+                         cls="navlink") for t in teams_i_admin(sess)]
+    if can_invite(sess):
+        admin_links.insert(0, A("✉ Invite a user", href="/admin/invite", cls="navlink"))
+    return Div(
+        Div("JTC ", Span("TaxHub"), cls="brand"),
+        team_switcher(sess),
+        A("+ New chat", href="/", cls="newchat"),
+        Div(Div("Recent chats", cls="lbl"),
+            *[A(s.get("title") or "Chat", href=f"/?sid={s['id']}", cls="sess")
+              for s in sessions] or [Div("No chats yet", cls="muted", style="font-size:12px")],
+            cls="section"),
+        Div(Div("Navigate", cls="lbl"),
+            A("Dashboard", href="/dashboard", cls="navlink"),
+            A("Entities", href="/entities", cls="navlink"),
+            A("Obligations", href="/obligations", cls="navlink"),
+            A("📅 Calendar", href="/calendar", cls="navlink"),
+            A("🗺 Coverage", href="/coverage", cls="navlink"),
+            A("🌐 AEOI / FATCA-CRS", href="/aeoi", cls="navlink"),
+            A("Jurisdictions", href="/jurisdictions", cls="navlink"),
+            A("Documents", href="/documents", cls="navlink"),
+            A("Changes", href="/changes", cls="navlink"),
+            cls="section"),
+        Div(Div("Tax Forms Tree", cls="lbl"), tree_component(), cls="section"),
+        Div(Div("Shortcuts", cls="lbl"),
+            *[Div(B(p), " ", desc, cls="shortcut", onclick=f"fillChat({ex!r})")
+              for p, desc, ex in SHORTCUTS],
+            cls="section"),
+        Div(Div("Account", cls="lbl"),
+            A("👤 My profile", href="/profile", cls="navlink"),
+            *admin_links,
+            A("📘 User Guide", href="/help", cls="navlink"),
+            A("🛠 Technical Guide", href="/technical-guide", cls="navlink"),
+            A("🌳 Document Hierarchy", href="/document-hierarchy", cls="navlink"),
+            A("🕸 Ontology", href="/ontology", cls="navlink"),
+            A("Sign out", href="/logout", cls="navlink"),
+            cls="section"),
+        cls="pane left")
+
+
+def bubble(role, content, mid=None, rating=None):
+    if role == "assistant":
+        fb = ""
+        if mid:
+            attrs = {"data-mid": str(mid)}
+            if rating in (1, -1):
+                attrs["data-rated"] = str(rating)
+            fb = Div(Button("👍", cls="fbb", onclick=f"sendFb({mid},1,this.parentNode,this)"),
+                     Button("👎", cls="fbb", onclick=f"sendFb({mid},-1,this.parentNode,this)"),
+                     cls="fb", **attrs)
+        return Div(content, fb, cls="bubble assistant", **{"data-md": "1"})
+    return Div(content, cls="bubble user")
+
+
+def center_pane(messages, ratings=None):
+    ratings = ratings or {}
+    msg_divs = [bubble(m["role"], m["content"], m.get("id"), ratings.get(m.get("id")))
+                for m in messages] or [
+        Div(Div("TaxHub Assistant", style="font-weight:600;margin-bottom:4px"),
+            "Ask me which tax form to file, or a tax-law question. I'll route to the "
+            "right specialist agent and cite my sources.", cls="bubble assistant")]
+    return Div(
+        Div("AI Assistant", cls="chead"),
+        Div(*msg_divs, id="msgs", cls="msgs"),
+        Div(*[Div(s, cls="scard", onclick=f"fillChat({s!r})") for s in SUGGESTIONS],
+            id="cards", cls="cards"),
+        Form(Textarea(name="msg", placeholder="Ask anything, or type a shortcut like form: …",
+                      id="inp"),
+             Button("Send", type="submit"),
+             id="composer", cls="composer", onsubmit="return sendMessage(event)"),
+        cls="pane center")
+
+
+def feed_item(ch):
+    kind = ch.get("change_type", "new")
+    return Div(
+        Div(Span(kind, cls=f"pill {kind}"), " ",
+            f"{ch['jurisdiction_code']} · {(ch.get('detected_at') or '')[:10]}", cls="meta"),
+        Div(ch.get("title", ""), style="font-weight:600;font-size:13px"),
+        (Div(ch["ai_summary"][:160], style="color:#6b7686;margin-top:3px")
+         if ch.get("ai_summary") else ""),
+        cls="feed-item", onclick=f"openDoc({ch.get('document_id')})")
+
+
+def right_pane():
+    changes = store.recent_changes(20)
+    return Div(
+        Div(Span("Recent changes", id="rtitle"),
+            Span("", id="rclose", cls="x", onclick="closePdf()"), cls="rhead"),
+        Div(Div(*[feed_item(c) for c in changes], id="feed"), id="rbody", cls="rbody"),
+        cls="pane right", id="rightpane")
+
+
+JS = Script("""
+function fillChat(t){var i=document.getElementById('inp');i.value=t;i.focus();}
+function renderMd(el){if(window.marked){el.innerHTML=linkMarkers(marked.parse(el.textContent));}}
+function linkMarkers(h){
+  h=h.replace(/\\[form:(\\d+)\\]/g,'<a href="#" onclick="openForm($1);return false">📄 open form</a>');
+  h=h.replace(/\\[doc:(\\d+)\\]/g,'<a href="#" onclick="openDoc($1);return false">🔗 open doc</a>');
+  h=h.replace(/\\[w8:(\\d+)\\]/g,'<a href="#" onclick="openW8($1);return false">📝 open W-8 editor</a>');
+  return h;}
+document.querySelectorAll('[data-md]').forEach(renderMd);
+function thumbs(bubble,mid){if(!bubble||!mid||bubble.querySelector('.fb'))return;
+  var w=document.createElement('div');w.className='fb';w.dataset.mid=mid;
+  var up=document.createElement('button');up.className='fbb';up.textContent='👍';up.title='Good response';
+  up.onclick=function(){sendFb(mid,1,w,up);};
+  var dn=document.createElement('button');dn.className='fbb';dn.textContent='👎';dn.title='Needs work';
+  dn.onclick=function(){sendFb(mid,-1,w,dn);};
+  w.appendChild(up);w.appendChild(dn);bubble.appendChild(w);}
+function sendFb(mid,rating,w,btn){
+  var comment='';
+  if(rating===-1){comment=window.prompt('Optional — what was wrong with this answer?')||'';}
+  var p=new URLSearchParams();p.append('message_id',mid);p.append('rating',String(rating));
+  if(comment)p.append('comment',comment);
+  fetch('/chat-feedback',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()}).catch(function(){});
+  Array.prototype.forEach.call(w.querySelectorAll('.fbb'),function(b){b.disabled=true;b.style.opacity='.3';});
+  btn.style.opacity='1';btn.classList.add('chosen');}
+function markFb(){document.querySelectorAll('.fb[data-rated]').forEach(function(w){
+  var r=w.getAttribute('data-rated');
+  w.querySelectorAll('.fbb').forEach(function(b){b.disabled=true;b.style.opacity='.3';});
+  var sel=w.querySelector(r==='1'?'.fbb':'.fbb+.fbb');if(sel){sel.style.opacity='1';sel.classList.add('chosen');}});}
+document.addEventListener('DOMContentLoaded',markFb);
+function addBubble(role,html){var m=document.getElementById('msgs');
+  var d=document.createElement('div');d.className='bubble '+role;d.innerHTML=html;
+  m.appendChild(d);m.scrollTop=m.scrollHeight;return d;}
+let streaming=false;
+async function sendMessage(e){if(e)e.preventDefault();if(streaming)return false;
+  var i=document.getElementById('inp');var msg=i.value.trim();if(!msg)return false;
+  streaming=true;addBubble('user',msg.replace(/</g,'&lt;'));i.value='';
+  var sid=new URLSearchParams(location.search).get('sid')||'';
+  var b=addBubble('assistant','<span style="color:#9aa">…</span>');var acc='';
+  var resp=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({msg:msg,sid:sid})});
+  var rd=resp.body.getReader(),dec=new TextDecoder(),buf='';
+  while(true){var r=await rd.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});
+    var idx;while((idx=buf.indexOf('\\n\\n'))>=0){var raw=buf.slice(0,idx);buf=buf.slice(idx+2);
+      var ev=raw.match(/^event: (.*)$/m),da=raw.match(/^data: (.*)$/m);if(!ev||!da)continue;
+      var type=ev[1],data=JSON.parse(da[1]);
+      if(type==='token'){if(acc===''){b.innerHTML='';}acc+=data.text;
+        b.innerHTML=linkMarkers(window.marked?marked.parse(acc):acc);}
+      else if(type==='tool_start'){var c=document.createElement('span');c.className='toolchip';
+        c.textContent='⚙ '+data.name;b.appendChild(c);}
+      else if(type==='session'&&data.sid){history.replaceState(0,'','/?sid='+data.sid);}
+      else if(type==='done'){if(data.mid)thumbs(b,data.mid);}
+    }
+    document.getElementById('msgs').scrollTop=1e9;}
+  streaming=false;return false;}
+function openForm(id){var rp=document.getElementById('rbody');
+  if(!rp){window.open('/form-pdf/'+id,'_blank');return;}
+  document.getElementById('rtitle').textContent='Form #'+id;document.getElementById('rclose').textContent='✕';
+  fetch('/form/'+id).then(r=>r.text()).then(h=>{rp.innerHTML=h;});}
+function openDoc(id){if(!id)return;var rb=document.getElementById('rbody');
+  if(!rb){window.open('/document/'+id,'_blank');return;}
+  document.getElementById('rtitle').textContent='Document #'+id;
+  document.getElementById('rclose').textContent='✕';
+  rb.innerHTML='<iframe class="pdf" src="/document/'+id+'?embed=1"></iframe>';}
+function closePdf(){location.reload();}
+const W8SYM={ok:['✓','#1c7c44'],error:['⚠','#c0392b'],warning:['⚠','#b06b00'],empty:['○','#9a93a6']};
+function openW8(id){var rb=document.getElementById('rbody');
+  if(!rb){window.open('/w8/'+id,'_blank');return;}
+  var t=document.getElementById('rtitle');if(t)t.textContent='W-8BEN-E editor';
+  var c=document.getElementById('rclose');if(c)c.textContent='✕';
+  fetch('/w8/'+id).then(r=>r.text()).then(h=>{rb.innerHTML=h;animateW8(id);});}
+function animateW8(id){var inps=document.querySelectorAll('#rbody .w8inp');var i=0;
+  (function step(){if(i>=inps.length){revalidateW8(id);return;}
+    var el=inps[i++];var val=el.getAttribute('data-fill')||'';
+    el.classList.add('w8filling');
+    if(!val){el.classList.remove('w8filling');setTimeout(step,90);return;}
+    var j=0;(function type(){el.value=val.slice(0,j++);
+      if(j<=val.length){setTimeout(type,12);}
+      else{el.classList.remove('w8filling');el.classList.add('w8filled');
+        setTimeout(()=>el.classList.remove('w8filled'),500);setTimeout(step,140);}})();
+  })();}
+function revalidateW8(id){var fd=new FormData();
+  document.querySelectorAll('#rbody .w8inp').forEach(el=>fd.append(el.name,el.value));
+  fetch('/w8/'+id+'/revalidate',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    for(var fid in d.badges){var b=d.badges[fid];var s=document.getElementById('badge-'+fid);
+      var sym=W8SYM[b.badge]||W8SYM.empty;if(s){s.textContent=sym[0];s.style.color=sym[1];s.title=b.hint||'';}
+      var hn=document.getElementById('hint-'+fid);
+      if(hn){hn.textContent=b.hint||'';hn.style.color=(b.badge==='error')?'#c0392b':(b.badge==='warning')?'#b06b00':'var(--muted)';}}
+    var rd={not_ready:['Not ready','#c0392b'],review:['Needs review','#b06b00'],ready:['Filing-ready','#1c7c44']}[d.readiness];
+    var r=document.getElementById('w8readiness');if(r&&rd){r.textContent=rd[0];r.style.color=rd[1];}
+    var n=document.getElementById('w8note');if(n)n.textContent='  — '+d.counts.error+' errors · '+d.counts.warning+' warnings. Edit any field and re-validate.';
+  });}
+function signoffW8(){var s=document.getElementById('w8stamp');if(!s)return;
+  var d=new Date().toISOString().slice(0,10);
+  s.innerHTML='✓ Signed off (demo) · '+d;s.style.display='block';}
+(function(){var w=new URLSearchParams(location.search).get('w8');
+  if(w&&document.getElementById('rbody'))setTimeout(function(){openW8(w);},500);})();
+""")
+
+
+@rt("/")
+def home(sess, sid: int = 0):
+    if (r := require(sess)):
+        return r
+    messages = store.get_chat_messages(sid) if sid else []
+    ratings = store.feedback_for_messages([m["id"] for m in messages if m.get("id")]) \
+        if messages else {}
+    return (Title("TaxHub Assistant"), CSS,
+            Div(left_pane(sess), center_pane(messages, ratings), right_pane(), cls="app"), JS)
+
+
+# ── Chat SSE ────────────────────────────────────────────────────────────────
+AUTO_JUDGE = os.environ.get("AUTO_JUDGE", "1") == "1"
+_BG_TASKS: set = set()
+
+
+async def _auto_judge(message_id: int, question: str, answer: str) -> None:
+    """Score a turn with the LLM judge off the response path. Best-effort."""
+    import asyncio
+    try:
+        v = await asyncio.get_event_loop().run_in_executor(
+            None, chat_eval.judge_turn, question, answer)
+        if v:
+            store.add_message_judge(message_id, v["score"], v["verdict"], v["relevance"],
+                                    v["groundedness"], v["completeness"], v["reason"], v["model"])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _shortcut(msg: str):
+    low = msg.strip().lower()
+    if low.startswith("form:"):
+        return document_agent.invoke(msg.split(":", 1)[1].strip())
+    if low.startswith("law:"):
+        return law_agent.invoke(msg.split(":", 1)[1].strip())
+    if low.startswith("forms:"):
+        return metadata_agent.invoke({"jurisdiction_code": msg.split(":", 1)[1].strip().upper()})
+    if low.startswith("changes:"):
+        return changes_agent.invoke({"jurisdiction_code": msg.split(":", 1)[1].strip().upper()})
+    if low.startswith("find:"):
+        return document_agent.invoke(msg.split(":", 1)[1].strip())
+    return None
+
+
+@rt("/chat", methods=["POST"])
+async def chat(sess, msg: str = "", sid: int = 0):
+    if (require(sess)):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    email = user_email(sess)
+    tid = active_team_id(sess)
+    if not sid:
+        sid = store.create_chat_session(email, title=msg[:48], team_id=tid)
+    store.add_chat_message(sid, "user", msg)
+    from agents import sse as S
+    from agents.tools import active_team
+    # Scope the chat agents to this user's active team (data isolation).
+    active_team.set(tid)
+
+    async def stream():
+        active_team.set(tid)
+        yield S.event("session", {"sid": sid})
+        sc = _shortcut(msg)
+        if sc is not None:
+            yield S.event(S.TOKEN, {"text": sc})
+            mid = store.add_chat_message(sid, "assistant", sc)
+            yield S.event(S.DONE, {"tools": 1, "mid": mid})
+            return
+        acc, tools = [], 0
+        async for ev in orchestrator.astream(msg):
+            # tee token text so we can persist the full answer
+            if '"token"' in ev:
+                import json as _j
+                try:
+                    acc.append(_j.loads(ev.split("data: ", 1)[1])["text"])
+                except Exception:  # noqa: BLE001
+                    pass
+            elif '"tool_start"' in ev:
+                tools += 1
+            # The orchestrator already emits its own DONE; intercept it so we can
+            # persist the answer first and append the message id for feedback.
+            if "event: done" in ev:
+                answer = "".join(acc) or "(no response)"
+                mid = store.add_chat_message(sid, "assistant", answer)
+                try:
+                    store.log_event("chat_turn", email, tid, (msg or "")[:120])
+                except Exception:  # noqa: BLE001
+                    pass
+                if AUTO_JUDGE and mid:  # score quality in the background (Phase E)
+                    import asyncio
+                    t = asyncio.create_task(_auto_judge(mid, msg, answer))
+                    _BG_TASKS.add(t); t.add_done_callback(_BG_TASKS.discard)
+                yield S.event(S.DONE, {"tools": tools, "mid": mid})
+            else:
+                yield ev
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@rt("/chat-feedback", methods=["POST"])
+def chat_feedback(sess, message_id: int = 0, rating: int = 0, comment: str = ""):
+    """Record 👍 (rating=1) / 👎 (rating=-1) on an assistant reply."""
+    if (require(sess)):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    if not message_id or rating not in (1, -1):
+        return JSONResponse({"status": "error"}, status_code=400)
+    store.add_message_feedback(message_id, user_email(sess), active_team_id(sess),
+                               rating, comment)
+    try:
+        store.log_event("chat_feedback", user_email(sess), active_team_id(sess),
+                        f"{'up' if rating == 1 else 'down'} on msg {message_id}")
+    except Exception:  # noqa: BLE001
+        pass
+    return JSONResponse({"status": "ok"})
+
+
+@rt("/form/{form_id}")
+def form_view(sess, form_id: int):
+    if (r := require(sess)):
+        return r
+    f = store.get_form(form_id)
+    if not f:
+        return Div("Form not found")
+    has_pdf = bool(f.get("file_path"))
+    viewer = (Iframe(src=f"/form-pdf/{form_id}", cls="pdf", style="height:60vh")
+              if has_pdf else
+              Div(P("No local PDF stored yet.", cls="muted"),
+                  A("Open official source ↗", href=f.get("url") or "#", target="_blank", cls="btn")
+                  if f.get("url") else ""))
+    filing = f.get("filing_type") or "downloadable"
+    leg = f.get("legislation_ref")
+    return Div(
+        H3(f["title"], style="margin:0 0 6px"),
+        Div(FILING_LABELS.get(filing, filing), style="display:inline-block;font-weight:600;"
+            "font-size:12px;padding:3px 10px;border-radius:20px;background:#eef4fb;"
+            "color:#1b3a5b;margin-bottom:6px"),
+        Dl(Dt("Filing type"), Dd(FILING_LABELS.get(filing, filing)),
+           Dt("Jurisdiction"), Dd(JUR_NAMES.get(f["jurisdiction_code"], f["jurisdiction_code"])),
+           Dt("Category"), Dd(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "—")),
+           Dt("Document type"), Dd(FORM_TYPE_LABELS.get(f.get("form_type"), f.get("form_type") or "—")),
+           Dt("Who files"), Dd(f.get("who_files") or "—"),
+           Dt("Deadline"), Dd(f.get("deadline") or "—"),
+           Dt("Frequency"), Dd(f.get("frequency") or "—"),
+           Dt("Authority"), Dd(f.get("authority") or "—"),
+           *([Dt("Underlying law"), Dd(A("View legislation ↗", href=leg, target="_blank"))]
+             if leg else []), cls="formmeta"),
+        Div(viewer, style="margin-top:12px"))
+
+
+@rt("/form-pdf/{form_id}")
+def form_pdf(sess, form_id: int):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    f = store.get_form(form_id)
+    if not f or not f.get("file_path"):
+        return RedirectResponse(f.get("url") or "/", status_code=303) if f else Response("Not found", status_code=404)
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    p = root / f["file_path"]
+    if not p.exists():
+        return RedirectResponse(f.get("url") or "/", status_code=303)
+    return Response(p.read_bytes(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{f["form_key"]}.pdf"'})
+
+
+@rt("/api/feed")
+def api_feed(sess, j: str = ""):
+    changes = store.recent_changes(20, jurisdiction_code=j or None)
+    return Div(*[feed_item(c) for c in changes], id="feed")
+
+
+# ── Copilot: persistent right-hand chat pane (same agents as the Assistant) ───
+# Context-sensitive starter cards: each Navigate page primes the Copilot with
+# questions that make sense for what the user is looking at. Keyed by the `ctx`
+# Page() passes; falls back to the generic set.
+COPILOT_SUGGESTIONS = [
+    "What does Aurora Global Fund owe this year?",
+    "Which entities have economic-substance filings due before 30 September?",
+    "Show me every overdue obligation",
+    "form: Cayman economic substance notification",
+]
+
+COPILOT_CTX = {
+    "dashboard": [
+        "What's our overall compliance rate?",
+        "Show me every overdue obligation",
+        "What's due in the next 30 days?",
+        "How many obligations are awaiting expert sign-off?",
+    ],
+    "entities": [
+        "What does Aurora Global Fund owe this year?",
+        "Which entities are domiciled in the Cayman Islands?",
+        "List entities with a December year-end",
+        "Which entity has the most open obligations?",
+    ],
+    "obligations": [
+        "Show me every overdue obligation",
+        "Which obligations are awaiting expert sign-off?",
+        "List all economic-substance obligations",
+        "What's due in the next 30 days?",
+    ],
+    "aeoi": [
+        "Which entities aren't filing-ready for FATCA/CRS?",
+        "Which entities have an expired or expiring W-8?",
+        "Fill the W-8BEN-E for Aurora Global Fund",
+        "Which FFIs are missing a GIIN?",
+    ],
+    "calendar": [
+        "Which entities have economic-substance filings due before 30 September?",
+        "What's due in the next 30 days?",
+        "Show me every overdue obligation",
+        "What deadlines fall in this quarter?",
+    ],
+    "coverage": [
+        "Which jurisdiction has the lowest filing coverage?",
+        "What share of obligations are filed or confirmed?",
+        "Which obligation types are least covered?",
+        "Show me every unfiled obligation",
+    ],
+    "jurisdictions": [
+        "What obligations apply in the Cayman Islands?",
+        "Which jurisdictions require economic-substance filings?",
+        "Compare filing requirements across jurisdictions",
+        "form: Cayman economic substance notification",
+    ],
+    "documents": [
+        "Summarise the latest tax circular",
+        "Which documents mention economic substance?",
+        "Find the source for the Cayman ES deadline",
+        "What's the filing deadline for a CRS report?",
+    ],
+    "changes": [
+        "What changed in the last 30 days?",
+        "Which law updates affect my entities?",
+        "Summarise recent regulatory changes",
+        "Were any filing deadlines revised recently?",
+    ],
+}
+
+
+def copilot_suggestions(ctx):
+    """Resolve a Page ctx to the Copilot's starter cards. ctx may be a context
+    key (str) or an ("entity", name) tuple for the single-entity page."""
+    if isinstance(ctx, tuple) and ctx and ctx[0] == "entity":
+        name = ctx[1]
+        return [
+            f"What does {name} owe this year?",
+            f"What's overdue for {name}?",
+            f"Which of {name}'s obligations are awaiting sign-off?",
+            f"What's {name}'s next filing deadline?",
+        ]
+    return COPILOT_CTX.get(ctx, COPILOT_SUGGESTIONS)
+
+
+def copilot(ctx="default"):
+    """Right-hand chat pane for the Navigate pages — query the database with the
+    same orchestrator/agents while the page stays visible alongside it (the third
+    pane of the 3-pane layout, in place of the changes feed). `ctx` selects the
+    page-appropriate starter cards."""
+    return Div(
+        Div(Span("🤖 Copilot"),
+            Span("chat with your data", style="font-weight:400;color:var(--muted);font-size:12px"),
+            cls="rhead"),
+        Div(Div("Ask about your entities, obligations, deadlines, forms or recent "
+                "changes — I use the same agents as the Assistant.", cls="bubble assistant"),
+            *[Div(s, cls="scard", onclick=f"cpFill({s!r})") for s in copilot_suggestions(ctx)],
+            id="cpMsgs", cls="msgs"),
+        Form(Textarea(name="msg", placeholder="Ask the database…", id="cpInp"),
+             Button("Send", type="submit"),
+             cls="composer", onsubmit="return cpSend(event)"),
+        cls="pane right copilot-pane", id="copilotPane")
+
+
+COPILOT_JS = Script("""
+function cpFill(t){var i=document.getElementById('cpInp');i.value=t;i.focus();}
+function cpToggle(){var c=document.getElementById('copilot');c.classList.toggle('open');
+  if(c.classList.contains('open'))document.getElementById('cpInp').focus();}
+function cpBubble(role,html){var m=document.getElementById('cpMsgs');
+  var d=document.createElement('div');d.className='bubble '+role;d.innerHTML=html;
+  m.appendChild(d);m.scrollTop=m.scrollHeight;return d;}
+let cpStreaming=false,cpSid='';
+async function cpSend(e){if(e)e.preventDefault();if(cpStreaming)return false;
+  var i=document.getElementById('cpInp');var msg=i.value.trim();if(!msg)return false;
+  cpStreaming=true;cpBubble('user',msg.replace(/</g,'&lt;'));i.value='';
+  var b=cpBubble('assistant','<span style="color:#9aa">…</span>');var acc='';
+  var resp=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({msg:msg,sid:cpSid})});
+  var rd=resp.body.getReader(),dec=new TextDecoder(),buf='';
+  while(true){var r=await rd.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});
+    var idx;while((idx=buf.indexOf('\\n\\n'))>=0){var raw=buf.slice(0,idx);buf=buf.slice(idx+2);
+      var ev=raw.match(/^event: (.*)$/m),da=raw.match(/^data: (.*)$/m);if(!ev||!da)continue;
+      var type=ev[1],data=JSON.parse(da[1]);
+      if(type==='token'){if(acc===''){b.innerHTML='';}acc+=data.text;
+        b.innerHTML=linkMarkers(window.marked?marked.parse(acc):acc);}
+      else if(type==='tool_start'){var c=document.createElement('span');c.className='toolchip';
+        c.textContent='⚙ '+data.name;b.appendChild(c);}
+      else if(type==='session'&&data.sid){cpSid=data.sid;}
+      else if(type==='done'){if(data.mid)thumbs(b,data.mid);}
+    }
+    document.getElementById('cpMsgs').scrollTop=1e9;}
+  cpStreaming=false;return false;}
+""")
+
+
+# ── Secondary pages: same 3-pane shell as the Assistant ──────────────────────
+# left = nav, center = the page content, right = the Copilot (in place of the
+# changes feed). Pass sess so the left pane can show recent chats + sign-out.
+def Page(sess, *content, title="TaxHub", with_copilot=True, ctx="default"):
+    center = Div(Div(*content, cls="wrap"), cls="pane center centerdoc")
+    right = copilot(ctx) if with_copilot else Div(cls="pane right")
+    return (Title(title), CSS,
+            Div(left_pane(sess), center, right, cls="app"),
+            MARKED, JS, COPILOT_JS)
+
+
+@rt("/dashboard")
+def dashboard(sess):
+    if (r := require(sess)):
+        return r
+    tid = team_scope(sess)
+    st = store.stats()
+    jurs = store.list_jurisdictions_with_counts()
+    metrics = {"entities": store.count_entities(team_id=tid),
+               **{k: v for k, v in st.items() if not isinstance(v, list)}}
+    # Compliance roll-up across this team's obligations.
+    from collections import Counter
+    all_obs = store.list_obligations(limit=10000, team_id=tid)
+    by_status = Counter(o.get("status") or "not_started" for o in all_obs)
+    total = len(all_obs)
+    done = by_status.get("filed", 0) + by_status.get("confirmed", 0)
+    pct = round(100 * done / total) if total else 0
+    unver = sum(1 for o in all_obs if not o.get("verified"))
+    compliance = Div(
+        H2("Compliance"),
+        (Div(
+            Div(Span(f"{pct}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+                Span(" filed / confirmed", style="color:var(--muted)"),
+                style="margin-bottom:6px"),
+            P(A(f"{total} obligations", href="/obligations"), " across ",
+              A(f"{store.count_entities(team_id=tid)} entities", href="/entities"), " · ",
+              A(f"{unver} awaiting sign-off", href="/obligations"),
+              style="color:var(--muted);font-size:13px"),
+            Table(Tr(Th("Status"), Th("Count")),
+                  *[Tr(Td(A(ob_status_badge(s), href=f"/obligations?status={s}")),
+                       Td(str(by_status.get(s, 0)))) for s in OB_STATUS if by_status.get(s)]),
+        ) if total else P("No obligations yet — open an entity and click "
+                          "“Determine obligations”.", cls="muted")),
+        style="margin:14px 0")
+    # Upcoming deadlines (resolved dates) — the Monitor roll-up.
+    from datetime import date
+    dig = monitor.deadline_digest(store, date.today(), horizon_days=90, team_id=tid)
+    nxt = (dig["overdue"] + dig["upcoming"])[:6]
+    deadlines = Div(
+        H2("Deadlines"),
+        P(A(f"{dig['counts']['overdue']} overdue", href="/calendar?urg=overdue",
+            style="color:#c0392b;font-weight:600"), " · ",
+          A(f"{dig['counts']['upcoming']} due within 90 days", href="/calendar?urg=due_soon"),
+          " · ", A("open calendar →", href="/calendar"),
+          style="color:var(--muted);font-size:13px"),
+        (Table(Tr(Th("Due"), Th("Entity"), Th("Obligation"), Th("")),
+               *[Tr(Td(r.get("due") or "—"),
+                    Td(A(r.get("entity_name") or "—", href=f"/entity/{r['entity_id']}")),
+                    Td((r.get("title") or "form")[:48]),
+                    Td(urgency_badge(r["urgency"]))) for r in nxt])
+         if nxt else P("Nothing overdue or due in the next 90 days.", cls="muted")),
+        style="margin:14px 0") if total else ""
+    return Page(sess, H1("Dashboard"),
+        Table(Tr(Th("Metric"), Th("Count")),
+              *[Tr(Td(A(k, href="/entities") if k == "entities" else k), Td(str(v)))
+                for k, v in metrics.items()]),
+        compliance,
+        deadlines,
+        H2("Jurisdictions"),
+        Table(Tr(Th("Code"), Th("Documents")),
+              *[Tr(Td(A(j["code"], href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"])))
+                for j in jurs]),
+        title="Dashboard · TaxHub", ctx="dashboard")
+
+
+@rt("/jurisdictions")
+def jurisdictions(sess):
+    if (r := require(sess)):
+        return r
+    jurs = store.list_jurisdictions_with_counts()
+    return Page(sess, H1("Jurisdictions"),
+        Table(Tr(Th("Code"), Th("Name"), Th("Documents")),
+              *[Tr(Td(j["code"]), Td(A(JUR_NAMES.get(j["code"], j["code"]),
+                href=f"/jurisdiction/{j['code']}")), Td(str(j["docs"]))) for j in jurs]),
+        ctx="jurisdictions")
+
+
+@rt("/jurisdiction/{code}")
+def jurisdiction(sess, code: str):
+    if (r := require(sess)):
+        return r
+    docs = store.list_documents_for_jurisdiction(code)
+    return Page(sess, H1(JUR_NAMES.get(code, code)),
+        Table(Tr(Th("Document"), Th("Type"), Th("Versions"), Th("Status")),
+              *[Tr(Td(A(d["title"], href=f"/document/{d['id']}")), Td(d.get("doc_type", "")),
+                   Td(str(d.get("versions", 0))), Td(d.get("status", ""))) for d in docs]),
+        title=f"{code} · TaxHub", ctx="jurisdictions")
+
+
+@rt("/document/{doc_id}")
+def document(sess, doc_id: int, embed: int = 0):
+    if (require(sess)) and not embed:
+        return RedirectResponse("/login", status_code=303)
+    d = store.get_document_by_id(doc_id)
+    if not d:
+        return Div("Not found")
+    versions = store.list_versions(doc_id)
+    changes = store.list_changes_for_document(doc_id)
+    cites = store.list_citations(doc_id)
+    body = Div(
+        H1(d["title"]), P(d.get("reference") or "", cls="muted"),
+        (A("Open source ↗", href=d["url"], target="_blank", cls="btn") if d.get("url") else ""),
+        H2("Versions"),
+        Ul(*[Li(f"v{v['version_no']} · {v.get('content_hash','')[:10]} · {(v.get('fetched_at') or '')[:10]}")
+             for v in versions]),
+        H2("Changes"),
+        Ul(*[Li(f"{c['change_type']} — {(c.get('ai_summary') or '')[:140]}") for c in changes]
+            or [Li("No changes", cls="muted")]),
+        H2("Citations"),
+        Ul(*[Li(f"{c['cited_instrument']} {c.get('locator') or ''}") for c in cites[:30]]
+            or [Li("None", cls="muted")]))
+    if embed:
+        return (CSS, Div(body, cls="wrap"))
+    return Page(sess, body, title=f"{d['title'][:40]} · TaxHub", ctx="documents")
+
+
+# ── Document Hierarchy (Plotly tree: Jurisdiction ▸ Category ▸ Form type ▸ Form) ──
+def _hierarchy_payload(jur: str | None = None) -> dict:
+    """Hierarchy payload for Plotly icicle/treemap/sunburst, from forms_tree().
+    Leaves are forms (value 1, coloured by filing type, carry the form id);
+    branch values are leaf counts so branchvalues='total' is consistent."""
+    ids, labels, parents, values, colors, meta = [], [], [], [], [], []
+
+    def add(_id, label, parent, value, color, m=""):
+        ids.append(_id); labels.append(label); parents.append(parent)
+        values.append(value); colors.append(color); meta.append(m)
+
+    for j in forms_tree(jur):
+        jc = j["code"]; jcount = 0
+        for c in j["categories"]:
+            ccount = 0
+            cid = f"{jc}|{c['category']}"
+            for t in c["types"]:
+                tid = f"{cid}|{t['form_type']}"
+                for f in t["forms"]:
+                    add(f"{tid}|{f['id']}", f.get("title") or "form", tid, 1,
+                        _HIER_LEAF.get(f.get("filing_type") or "downloadable", "#cccccc"),
+                        f["id"])
+                add(tid, FORM_TYPE_LABELS.get(t["form_type"], t["form_type"]),
+                    cid, len(t["forms"]), _HIER_BRANCH["typ"])
+                ccount += len(t["forms"])
+            add(cid, CATEGORY_LABELS.get(c["category"], c["category"]),
+                jc, ccount, _HIER_BRANCH["cat"])
+            jcount += ccount
+        add(jc, JUR_NAMES.get(jc, jc), "", jcount, _HIER_BRANCH["jur"])
+    return {"ids": ids, "labels": labels, "parents": parents,
+            "values": values, "colors": colors, "meta": meta}
+
+
+_HBTN = ("padding:5px 12px;border:1px solid var(--navy);border-radius:6px;"
+         "background:#fff;color:#6b1766;cursor:pointer;font-size:13px")
+_HLEGEND = [("downloadable", "📄 Downloadable"), ("online", "🌐 Online"),
+            ("reference", "📘 Reference")]
+
+
+@rt("/document-hierarchy")
+def document_hierarchy(sess, jur: str = ""):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    payload = _hierarchy_payload(jur or None)
+    jurs = sorted({f["jurisdiction_code"] for f in store.list_forms(limit=5000)})
+    nleaf = sum(1 for m in payload["meta"] if m)
+    legend = Span(*[Span(Span("●", style=f"color:{_HIER_LEAF[k]}"), f" {lbl} ",
+                         style="font-size:12px;margin-left:8px") for k, lbl in _HLEGEND],
+                  style="color:var(--muted)")
+    controls = Div(
+        Select(Option("All jurisdictions", value="", selected=(jur == "")),
+               *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+               onchange="location='/document-hierarchy'+(this.value?('?jur='+this.value):'')",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        *[Button(lbl, onclick=f"setType('{t}')", id=f"bt_{t}", style=_HBTN)
+          for t, lbl in [("icicle", "Icicle"), ("treemap", "Treemap"), ("sunburst", "Sunburst")]],
+        legend,
+        Span(f"{nleaf} forms", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;gap:6px;align-items:center;padding:10px 22px;"
+              "border-bottom:1px solid var(--line);flex-wrap:wrap")
+    center = Div(
+        Div("Document Hierarchy", cls="chead"),
+        controls,
+        Div(id="plot", style="flex:1;min-height:0"),
+        cls="pane center")
+    right = Div(
+        Div(Span("Form detail", id="rtitle"),
+            Span("", id="rclose", cls="x", onclick="closePdf()"), cls="rhead"),
+        Div(Div("Click a form (a leaf of the tree) to view it here.", cls="muted"),
+            id="rbody", cls="rbody"),
+        cls="pane right", id="rightpane")
+    data_script = Script(f"window.HDATA={_json.dumps(payload)};")
+    plot_js = Script("""
+let HTYPE='icicle';
+function drawPlot(){
+  var d=window.HDATA;
+  var t={type:HTYPE,ids:d.ids,labels:d.labels,parents:d.parents,values:d.values,
+    branchvalues:'total',customdata:d.meta,
+    marker:{colors:d.colors,line:{width:1,color:'#fff'}},
+    hovertemplate:'%{label}<br>%{value} form(s)<extra></extra>'};
+  if(HTYPE!=='sunburst'){t.tiling={pad:1};}
+  Plotly.react('plot',[t],{margin:{l:4,r:4,t:4,b:4}},{responsive:true,displayModeBar:false});
+  var el=document.getElementById('plot');
+  if(!el._wired){el.on('plotly_click',function(e){var p=e.points&&e.points[0];
+    if(p&&p.customdata){openForm(p.customdata);}});el._wired=true;}
+  ['icicle','treemap','sunburst'].forEach(function(x){var b=document.getElementById('bt_'+x);
+    if(b){b.style.background=(x===HTYPE)?'#6b1766':'#fff';b.style.color=(x===HTYPE)?'#fff':'#6b1766';}});
+}
+function setType(x){HTYPE=x;drawPlot();}
+window.addEventListener('resize',function(){if(window.Plotly)Plotly.Plots.resize('plot');});
+drawPlot();
+""")
+    return (Title("Document Hierarchy · TaxHub"), CSS,
+            Div(left_pane(sess), center, right, cls="app"),
+            PLOTLY, JS, data_script, plot_js)
+
+
+# ── Ontology (Help): provenance/network graph + schema meta-graph ─────────────
+_ONTO_GROUPS = {  # vis-network group styling (JTC palette)
+    "jurisdiction": {"color": "#550055", "shape": "dot"},
+    "legislation": {"color": "#48484f", "shape": "diamond"},
+    "document": {"color": "#9c5797", "shape": "square"},
+    "form_downloadable": {"color": "#ba2a84", "shape": "dot"},
+    "form_online": {"color": "#6b1766", "shape": "dot"},
+    "form_reference": {"color": "#8a7d92", "shape": "dot"},
+}
+
+
+@rt("/ontology")
+def ontology(sess, mode: str = "instance", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    from web import ontology as onto
+    mode = "schema" if mode == "schema" else "instance"
+    data = (onto.build_schema(store) if mode == "schema"
+            else onto.build_instance(store, jur or None))
+    jurs = sorted({f["jurisdiction_code"] for f in store.list_forms(limit=5000)})
+
+    def mbtn(m, lbl):
+        on = (m == mode)
+        return A(lbl, href=f"/ontology?mode={m}" + (f"&jur={jur}" if jur and m == "instance" else ""),
+                 style=_HBTN + (";background:#6b1766;color:#fff" if on else ""))
+    legend = Span(
+        Span("● ", style="color:#550055"), "Jurisdiction  ",
+        Span("● ", style="color:#ba2a84"), "Form  ",
+        Span("◆ ", style="color:#48484f"), "Legislation",
+        style="color:var(--muted);font-size:12px;margin-left:8px")
+    controls = Div(
+        mbtn("instance", "Provenance"), mbtn("schema", "Schema"),
+        (Select(Option("All jurisdictions", value="", selected=(jur == "")),
+                *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+                onchange="location='/ontology?mode=instance'+(this.value?('&jur='+this.value):'')",
+                style="padding:7px;border:1px solid var(--line);border-radius:7px")
+         if mode == "instance" else Span()),
+        legend,
+        Span(data.get("stats", ""), style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;gap:6px;align-items:center;padding:10px 22px;"
+              "border-bottom:1px solid var(--line);flex-wrap:wrap")
+    center = Div(
+        Div("Ontology — ", Span("how forms trace back to the law" if mode == "instance"
+            else "how the graph database is organised", style="font-weight:400;color:var(--muted)"),
+            cls="chead"),
+        controls,
+        Div(id="net", style="flex:1;min-height:0;background:#fbfcfd"),
+        cls="pane center")
+    right = Div(
+        Div(Span("Detail", id="rtitle"),
+            Span("", id="rclose", cls="x", onclick="closePdf()"), cls="rhead"),
+        Div(Div("Click a form node to open it; click a legislation node to open the "
+                "source law.", cls="muted"), id="rbody", cls="rbody"),
+        cls="pane right", id="rightpane")
+    data_script = Script(f"window.GDATA={_json.dumps(data)};"
+                         f"window.GGROUPS={_json.dumps(_ONTO_GROUPS)};")
+    net_js = Script("""
+var d=window.GDATA;
+var nodes=new vis.DataSet(d.nodes), edges=new vis.DataSet(d.edges);
+var groups={};Object.keys(window.GGROUPS).forEach(function(k){var g=window.GGROUPS[k];
+  groups[k]={shape:g.shape,color:{background:g.color,border:g.color,
+    highlight:{background:g.color,border:'#000'}},font:{color:'#48484f',size:13}};});
+var net=new vis.Network(document.getElementById('net'),{nodes:nodes,edges:edges},{
+  groups:groups,
+  nodes:{borderWidth:1,scaling:{min:8,max:48},font:{size:13}},
+  edges:{color:{color:'#cdbcd0'},arrows:{to:{scaleFactor:0.5}},
+    font:{size:9,color:'#9a93a6',align:'middle'},smooth:{type:'dynamic'}},
+  physics:{stabilization:{iterations:160},barnesHut:{springLength:130,avoidOverlap:0.2}},
+  interaction:{hover:true,tooltipDelay:120}});
+net.on('click',function(p){if(!p.nodes.length)return;var n=nodes.get(p.nodes[0]);
+  if(n.formid){openForm(n.formid);}
+  else if(n.url){window.open(n.url,'_blank');}});
+""")
+    return (Title("Ontology · TaxHub"), CSS,
+            Div(left_pane(sess), center, right, cls="app"),
+            VISNET, JS, data_script, net_js)
+
+
+# ── Entities (Phase 1: model + CRUD + CSV import) ─────────────────────────────
+def _jur_badges(codes):
+    return Span(*[Span(c, style="display:inline-block;background:#efeaf3;color:#6b1766;"
+                       "border-radius:5px;padding:1px 7px;margin:1px;font-size:11px")
+                  for c in (codes or [])]) or Span("—", cls="muted")
+
+
+@rt("/entities")
+def entities(sess, added: str = ""):
+    if (r := require(sess)):
+        return r
+    tid = team_scope(sess)
+    ents = store.list_entities(limit=1000, team_id=tid)
+    from collections import Counter
+    all_obs = store.list_obligations(limit=10000, team_id=tid)
+    n_by_ent = Counter(o["entity_id"] for o in all_obs)
+    done_by_ent = Counter(o["entity_id"] for o in all_obs
+                          if (o.get("status") in ("filed", "confirmed")))
+
+    def ob_chip(eid):
+        n = n_by_ent.get(eid, 0)
+        if not n:
+            return Span("—", cls="muted")
+        return Span(f"{done_by_ent.get(eid, 0)}/{n} filed",
+                    style="display:inline-block;background:#efeaf3;color:#6b1766;"
+                          "border-radius:20px;padding:1px 9px;font-size:11px;font-weight:600")
+
+    rows = [Tr(Td(A(e["name"], href=f"/entity/{e['id']}")),
+               Td(e.get("type") or "—"), Td(e.get("domicile") or "—"),
+               Td(_jur_badges(e.get("jurisdictions"))),
+               Td(e.get("fy_end") or "—"), Td(ob_chip(e["id"])),
+               Td(e.get("client_ref") or "—"))
+            for e in ents]
+    add_form = Form(
+        H3("Add an entity"),
+        (P("✓ Saved.", style="color:#1c7c44") if added else ""),
+        Div(Input(name="name", placeholder="Entity name", required=True, style="width:40%"),
+            Select(*[Option(t, value=t) for t in ENTITY_TYPES], name="type", style="width:18%;margin:0 1%"),
+            Select(*[Option(JUR_NAMES.get(c, c), value=c) for c in sorted(JUR_NAMES)],
+                   name="domicile", style="width:18%;margin-right:1%"),
+            Input(name="client_ref", placeholder="Client ref", style="width:18%"),
+            style="display:flex;gap:4px;margin:6px 0"),
+        Div(Input(name="jurisdictions", placeholder="Jurisdictions (comma codes, e.g. KY,US)", style="width:40%"),
+            Input(name="fy_end", placeholder="Financial year-end (e.g. 31 December)", style="width:30%;margin:0 1%"),
+            Input(name="activities", placeholder="Activities (comma)", style="width:28%"),
+            style="display:flex;gap:4px;margin:6px 0"),
+        Button("Save entity", cls="btn", style="margin-top:8px"),
+        method="post", action="/entity")
+    import_form = Form(
+        H3("Import from CSV"),
+        P("Columns: name,type,domicile,jurisdictions,fy_end,activities,client_ref "
+          "(jurisdictions & activities semicolon- or pipe-separated).", cls="muted",
+          style="font-size:12px"),
+        Input(type="file", name="csv_file", accept=".csv", required=True),
+        Button("Import CSV", cls="btn", style="margin-left:8px"),
+        method="post", action="/entities/import", enctype="multipart/form-data")
+    return Page(sess, 
+        H1("Entities"),
+        P(f"{len(ents)} entities. The funds/SPVs you administer — obligations, "
+          "deadlines and filing status build on these in the next phases.", cls="muted"),
+        add_form, import_form,
+        H2("Portfolio"),
+        (Table(Tr(Th("Name"), Th("Type"), Th("Domicile"), Th("Jurisdictions"),
+                  Th("FY end"), Th("Obligations"), Th("Client ref")), *rows) if rows
+         else P("No entities yet — add one above or import a CSV.", cls="muted")),
+        title="Entities · TaxHub", ctx="entities")
+
+
+@rt("/entity", methods=["POST"])
+def entity_create(sess, name: str = "", type: str = "company", domicile: str = "",
+                  jurisdictions: str = "", fy_end: str = "", activities: str = "",
+                  client_ref: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    if not name.strip():
+        return RedirectResponse("/entities", status_code=303)
+    store.upsert_entity({
+        "name": name.strip(), "type": type, "domicile": domicile,
+        "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", jurisdictions) if j.strip()],
+        "fy_end": fy_end.strip() or None,
+        "activities": [a.strip() for a in re.split(r"[,;|]", activities) if a.strip()],
+        "client_ref": client_ref.strip() or None, "status": "active",
+        "team_id": active_team_id(sess)})
+    return RedirectResponse("/entities?added=1", status_code=303)
+
+
+@rt("/entities/import", methods=["POST"])
+async def entities_import(sess, csv_file: UploadFile):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    import csv
+    import io
+    raw = (await csv_file.read()).decode("utf-8-sig", errors="ignore")
+    n = 0
+    for row in csv.DictReader(io.StringIO(raw)):
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        store.upsert_entity({
+            "name": name, "type": (row.get("type") or "company").strip(),
+            "domicile": (row.get("domicile") or "").strip(),
+            "jurisdictions": [j.strip().upper() for j in re.split(r"[,;|]", row.get("jurisdictions") or "") if j.strip()],
+            "fy_end": (row.get("fy_end") or "").strip() or None,
+            "activities": [a.strip() for a in re.split(r"[,;|]", row.get("activities") or "") if a.strip()],
+            "client_ref": (row.get("client_ref") or "").strip() or None, "status": "active",
+            "team_id": active_team_id(sess)})
+        n += 1
+    return RedirectResponse("/entities?added=1", status_code=303)
+
+
+@rt("/entity/{entity_id}")
+def entity_view(sess, entity_id: int):
+    if (r := require(sess)):
+        return r
+    e = store.get_entity(entity_id)
+    if not e:
+        return Page(sess, H1("Entity not found"))
+    tid = team_scope(sess)
+    if tid is not None and e.get("team_id") != tid:
+        return Page(sess, H1("Entity not in your team"),
+                    P("This entity belongs to a different team. Switch teams to view it.",
+                      cls="muted"), title="Not available · TaxHub")
+    from datetime import date
+    today = date.today()
+    obs = [monitor.annotate(o, e, today) for o in store.list_obligations(entity_id=entity_id)]
+    nver = sum(1 for o in obs if o.get("verified"))
+    determine = Form(
+        Button("⟳ Determine obligations", cls="btn"),
+        method="post", action=f"/entity/{entity_id}/determine", style="display:inline")
+
+    def ob_row(o):
+        st = o.get("status") or "not_started"
+        status_sel = Form(
+            Select(*[Option(OB_STATUS_LABELS[s], value=s, selected=(s == st)) for s in OB_STATUS],
+                   name="status", onchange="this.form.submit()",
+                   style=f"border:1px solid var(--line);border-radius:6px;padding:3px 6px;"
+                         f"font-weight:600;color:{OB_STATUS_COLOR.get(st, '#48484f')};cursor:pointer"),
+            method="post", action=f"/obligation/{o['id']}/status", style="display:inline")
+        ver = o.get("verified")
+        ver_form = Form(
+            Button("✓ Verified" if ver else "Mark verified",
+                   style=(("background:#eaf5ee;color:#1c7c44;border:1px solid #b7e0c4;" if ver
+                           else "background:#fff;color:#6b7686;border:1px solid #e6e3ec;") +
+                          "border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer")),
+            method="post", action=f"/obligation/{o['id']}/verify", style="display:inline")
+        return Tr(Td(o.get("jurisdiction_code")),
+                  Td(A(o.get("title") or "form", href=f"/form-pdf/{o['form_id']}", target="_blank")),
+                  Td(CATEGORY_LABELS.get(o.get("category"), o.get("category") or "—")),
+                  _due_cell(o), Td(urgency_badge(o["urgency"])),
+                  Td(o.get("deadline") or "—"), Td(status_sel), Td(ver_form))
+
+    ob_section = Div(
+        Div(H2("Obligations", style="display:inline-block;margin:0 12px 0 0"), determine,
+            (Span(f"  {len(obs)} obligations · {nver} verified",
+                  style="color:var(--muted);font-size:12px;margin-left:10px") if obs else ""),
+            style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"),
+        (Table(Tr(Th("Jur"), Th("Obligation"), Th("Category"), Th("Due"), Th(""),
+                  Th("Filing deadline"), Th("Status"), Th("Verified")), *[ob_row(o) for o in obs])
+         if obs else P("No obligations yet — click ", B("Determine obligations"),
+                       " to generate them from this entity's jurisdictions and activities.",
+                       cls="muted")),
+        style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px")
+    return Page(sess, 
+        H1(e["name"]),
+        Dl(Dt("Type"), Dd(e.get("type") or "—"),
+           Dt("Domicile"), Dd(JUR_NAMES.get(e.get("domicile"), e.get("domicile") or "—")),
+           Dt("Operating jurisdictions"), Dd(_jur_badges(e.get("jurisdictions"))),
+           Dt("Financial year-end"), Dd(e.get("fy_end") or "—"),
+           Dt("Activities"), Dd(", ".join(e.get("activities") or []) or "—"),
+           Dt("Client ref"), Dd(e.get("client_ref") or "—"),
+           Dt("Status"), Dd(e.get("status") or "—"), cls="formmeta"),
+        ob_section,
+        Div(aeoi_entity_section(e, today), id="aeoi"),
+        Form(Button("Delete entity", cls="btn",
+                    style="background:#b0353a", onclick="return confirm('Delete this entity?')"),
+             method="post", action=f"/entity/{entity_id}/delete", style="margin-top:18px"),
+        title=f"{e['name']} · TaxHub", ctx=("entity", e["name"]))
+
+
+@rt("/entity/{entity_id}/determine", methods=["POST"])
+def entity_determine(sess, entity_id: int):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from web.obligations import run_determine
+    run_determine(store, entity_id)
+    return RedirectResponse(f"/entity/{entity_id}", status_code=303)
+
+
+@rt("/obligation/{ob_id}/status", methods=["POST"])
+def obligation_status(sess, ob_id: int, status: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    o = store.get_obligation(ob_id)
+    if o and status in OB_STATUS:
+        store.set_obligation_status(ob_id, status)
+    return RedirectResponse(f"/entity/{o['entity_id']}" if o else "/entities", status_code=303)
+
+
+@rt("/obligation/{ob_id}/verify", methods=["POST"])
+def obligation_verify(sess, ob_id: int):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    o = store.get_obligation(ob_id)
+    if o:
+        store.set_obligation_verified(ob_id, not o.get("verified"))
+    return RedirectResponse(f"/entity/{o['entity_id']}" if o else "/entities", status_code=303)
+
+
+@rt("/obligations")
+def obligations_all(sess, status: str = "", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    tid = team_scope(sess)
+    obs = store.list_obligations(status=status or None, limit=10000, team_id=tid)
+    if jur:
+        obs = [o for o in obs if o.get("jurisdiction_code") == jur]
+    ents = {e["id"]: e["name"] for e in store.list_entities(limit=2000, team_id=tid)}
+    jurs = sorted({o.get("jurisdiction_code") for o in store.list_obligations(limit=10000, team_id=tid) if o.get("jurisdiction_code")})
+    def opt(v, label, cur):
+        return Option(label, value=v, selected=(v == cur))
+    filters = Div(
+        Select(opt("", "All statuses", status),
+               *[opt(s, OB_STATUS_LABELS[s], status) for s in OB_STATUS],
+               onchange="location='/obligations?status='+this.value+'&jur='+'" + jur + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        Select(opt("", "All jurisdictions", jur),
+               *[opt(c, JUR_NAMES.get(c, c), jur) for c in jurs],
+               onchange="location='/obligations?jur='+this.value+'&status='+'" + status + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px;margin-left:6px"),
+        Span(f"  {len(obs)} obligations", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;align-items:center;margin:12px 0")
+    rows = [Tr(Td(A(ents.get(o["entity_id"], "—"), href=f"/entity/{o['entity_id']}")),
+               Td(o.get("jurisdiction_code")),
+               Td(A(o.get("title") or "form", href=f"/form-pdf/{o['form_id']}", target="_blank")),
+               Td(CATEGORY_LABELS.get(o.get("category"), o.get("category") or "—")),
+               Td(o.get("deadline") or "—"),
+               Td(ob_status_badge(o.get("status"))),
+               Td("✓" if o.get("verified") else "—"))
+            for o in obs]
+    return Page(sess, 
+        H1("Obligations"),
+        P("Every filing obligation across the portfolio. Filter by status or "
+          "jurisdiction; click an entity or open a form.", cls="muted"),
+        filters,
+        (Table(Tr(Th("Entity"), Th("Jur"), Th("Obligation"), Th("Category"),
+                  Th("Filing deadline"), Th("Status"), Th("Verified")), *rows)
+         if rows else P("No obligations match.", cls="muted")),
+        title="Obligations · TaxHub", ctx="obligations")
+
+
+def urgency_badge(urg):
+    col = monitor.URGENCY_COLOR.get(urg, "#7a7a85")
+    return Span(monitor.URGENCY_LABEL.get(urg, urg),
+                style=f"display:inline-block;background:{col}22;color:{col};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
+
+
+def _due_cell(r):
+    if not r.get("due"):
+        return Td(Span("—", style="color:var(--muted)"),
+                  title=r.get("due_basis") or "")
+    days = r.get("days_out")
+    rel = "today" if days == 0 else (f"{-days}d overdue" if days < 0 else f"in {days}d")
+    mark = Span(" ~", title="Indicative — verify against the source rule",
+                style="color:var(--amber);font-weight:700") if r.get("indicative") else ""
+    return Td(r["due"], mark, Br(),
+              Span(rel, style="color:var(--muted);font-size:11px"),
+              title=r.get("due_basis") or "")
+
+
+@rt("/calendar")
+def calendar_view(sess, urg: str = "", jur: str = ""):
+    if (r := require(sess)):
+        return r
+    from datetime import date
+    today = date.today()
+    cal = monitor.portfolio_calendar(store, today, team_id=team_scope(sess))
+    counts = {u: sum(1 for r in cal if r["urgency"] == u) for u in monitor.URGENCY_LABEL}
+    rows_all = cal
+    if urg:
+        cal = [r for r in cal if r["urgency"] == urg]
+    if jur:
+        cal = [r for r in cal if r.get("jurisdiction_code") == jur]
+    jurs = sorted({r.get("jurisdiction_code") for r in rows_all if r.get("jurisdiction_code")})
+
+    def chip(u):
+        active = (u == urg)
+        col = monitor.URGENCY_COLOR.get(u, "#7a7a85")
+        return A(f"{monitor.URGENCY_LABEL[u]} {counts.get(u, 0)}",
+                 href=f"/calendar?urg={'' if active else u}&jur={jur}",
+                 style=f"display:inline-block;padding:5px 12px;border-radius:20px;"
+                       f"font-size:12px;font-weight:600;text-decoration:none;margin-right:6px;"
+                       f"border:1px solid {col};color:{'#fff' if active else col};"
+                       f"background:{col if active else 'transparent'}")
+    chips = Div(*[chip(u) for u in ("overdue", "due_soon", "upcoming", "scheduled", "undated", "done")],
+                style="margin:12px 0")
+    jurbar = Div(
+        Select(Option("All jurisdictions", value="", selected=(not jur)),
+               *[Option(JUR_NAMES.get(c, c), value=c, selected=(c == jur)) for c in jurs],
+               onchange="location='/calendar?jur='+this.value+'&urg='+'" + urg + "'",
+               style="padding:7px;border:1px solid var(--line);border-radius:7px"),
+        Span(f"  {len(cal)} obligations", style="color:var(--muted);font-size:12px;margin-left:auto"),
+        style="display:flex;align-items:center;margin:8px 0")
+    rows = [Tr(_due_cell(r),
+               Td(urgency_badge(r["urgency"])),
+               Td(A(r.get("entity_name") or "—", href=f"/entity/{r['entity_id']}")),
+               Td(r.get("jurisdiction_code")),
+               Td(A(r.get("title") or "form", href=f"/form-pdf/{r['form_id']}", target="_blank")),
+               Td(ob_status_badge(r.get("status"))),
+               Td(Span(r.get("deadline") or "—", style="color:var(--muted);font-size:11px")))
+            for r in cal]
+    return Page(sess, 
+        H1("Deadline calendar"),
+        P("Filing deadlines across the portfolio, with concrete dates resolved from "
+          "each rule and the entity's financial year-end. ", Span("~", style="color:var(--amber);font-weight:700"),
+          " marks an indicative date — verify against the source rule. Closed "
+          "obligations (filed/confirmed) are never flagged overdue.", cls="muted"),
+        chips, jurbar,
+        (Table(Tr(Th("Due"), Th("Urgency"), Th("Entity"), Th("Jur"), Th("Obligation"),
+                  Th("Status"), Th("Rule")), *rows)
+         if rows else P("No obligations match.", cls="muted")),
+        title="Calendar · TaxHub", ctx="calendar")
+
+
+def aeoi_readiness_badge(readiness):
+    r = aeoi.READINESS.get(readiness, aeoi.READINESS["review"])
+    return Span(r["label"],
+                style=f"display:inline-block;background:{r['color']}22;color:{r['color']};"
+                      "border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600")
+
+
+_SEV_COLOR = {"error": "#c0392b", "warning": "#b06b00", "info": "#2c6fb0"}
+
+
+def aeoi_finding_row(f):
+    col = _SEV_COLOR.get(f["severity"], "#7a7a85")
+    return Tr(
+        Td(Span(f["severity"].upper(),
+                style=f"color:{col};font-weight:700;font-size:11px")),
+        Td(Code(f["rule"], style="font-size:11px;color:var(--muted)")),
+        Td(B(f["message"]), Br(),
+           Span(f["fix"], style="color:var(--muted);font-size:12px")))
+
+
+def aeoi_entity_section(entity, today):
+    """The AEOI panel shown on an entity page: classification, documentation,
+    controlling persons and the validation findings."""
+    v = aeoi.validate(entity, today=today)
+    p, cls = v["profile"], v["profile"]["classification"]
+    sc = p["self_cert"]
+    cps = p["controlling_persons"]
+    head = Div(
+        H2("AEOI · FATCA / CRS", style="display:inline-block;margin:0 12px 0 0"),
+        aeoi_readiness_badge(v["readiness"]),
+        Span(f"  {v['counts']['error']} errors · {v['counts']['warning']} warnings",
+             style="color:var(--muted);font-size:12px;margin-left:10px"),
+        A("📝 Fill W-8BEN-E", href=f"/?w8={entity['id']}", cls="btn",
+          style="margin-left:auto;font-size:12px;padding:6px 12px"),
+        style="display:flex;align-items:center;gap:8px;flex-wrap:wrap")
+    classification = Dl(
+        Dt("CRS classification"), Dd(cls["crs"]),
+        Dt("FATCA classification"), Dd(cls["fatca"]),
+        Dt("GIIN"), Dd(p.get("giin") or Span("— not held", style="color:#c0392b")),
+        Dt("Self-certification"),
+        Dd(f"{sc['form']} · signed {sc['signed']}",
+           (f" · expires {sc['expiry']}" if sc.get("expiry") else " · no expiry"),
+           (" · treaty claim" if sc.get("treaty_claim") else ""),
+           (f" · foreign TIN {sc['foreign_tin']}" if sc.get("foreign_tin")
+            else (Span(" · no foreign TIN", style="color:#c0392b")
+                  if sc.get("treaty_claim") else ""))),
+        cls="formmeta")
+    cp_block = ""
+    if cls["is_passive"]:
+        cp_rows = [Tr(Td(c["name"]), Td(JUR_NAMES.get(c.get("residence"), c.get("residence") or "—")),
+                      Td(c.get("tin") or Span("— missing", style="color:#c0392b")),
+                      Td("✓" if c.get("self_cert") else Span("— missing", style="color:#b06b00")))
+                   for c in cps]
+        cp_block = Div(
+            H3("Controlling persons", style="font-size:15px;margin:14px 0 6px"),
+            (Table(Tr(Th("Name"), Th("Tax residence"), Th("TIN"), Th("Self-cert")), *cp_rows)
+             if cp_rows else P("None identified.", cls="muted")))
+    findings_block = (
+        Table(Tr(Th("Severity"), Th("Rule"), Th("Finding & remediation")),
+              *[aeoi_finding_row(f) for f in v["findings"]])
+        if v["findings"] else
+        P("✓ No AEOI validation issues — this entity is filing-ready.",
+          style="color:#1c7c44"))
+    return Div(head, classification, cp_block,
+               H3("Validation", style="font-size:15px;margin:14px 0 6px"), findings_block,
+               style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px")
+
+
+@rt("/aeoi")
+def aeoi_view(sess, readiness: str = ""):
+    if (r := require(sess)):
+        return r
+    from datetime import date
+    today = date.today()
+    rows = aeoi.portfolio_aeoi(store, today, team_id=team_scope(sess))
+    summ = aeoi.portfolio_summary(rows)
+    if readiness:
+        rows = [r for r in rows if r["readiness"] == readiness]
+
+    def chip(k):
+        active = (k == readiness)
+        col = aeoi.READINESS[k]["color"]
+        return A(f"{aeoi.READINESS[k]['label']} {summ['by_readiness'].get(k, 0)}",
+                 href=f"/aeoi?readiness={'' if active else k}",
+                 style=f"display:inline-block;padding:5px 12px;border-radius:20px;"
+                       f"font-size:12px;font-weight:600;text-decoration:none;margin-right:6px;"
+                       f"border:1px solid {col};color:{'#fff' if active else col};"
+                       f"background:{col if active else 'transparent'}")
+    chips = Div(*[chip(k) for k in ("not_ready", "review", "ready")], style="margin:12px 0")
+    headline = Div(
+        Div(Span(f"{summ['ready_pct']}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" filing-ready", style="color:var(--muted)"), style="margin-bottom:6px"),
+        P(f"{summ['total']} entities · ",
+          Span(f"{summ['errors']} blocking errors", style="color:#c0392b;font-weight:600"),
+          " · ", Span(f"{summ['warnings']} warnings", style="color:#b06b00"),
+          style="color:var(--muted);font-size:13px"),
+        style="margin:8px 0")
+    rows_ui = [Tr(
+        Td(A(r["name"], href=f"/entity/{r['id']}#aeoi")),
+        Td(r.get("type") or "—"),
+        Td(JUR_NAMES.get(r.get("domicile"), r.get("domicile") or "—")),
+        Td(r["crs"]), Td(r["fatca"]),
+        Td(Span(str(r["counts"]["error"]),
+                style="color:#c0392b;font-weight:700" if r["counts"]["error"] else "color:var(--muted)")),
+        Td(Span(str(r["counts"]["warning"]),
+                style="color:#b06b00;font-weight:700" if r["counts"]["warning"] else "color:var(--muted)")),
+        Td(aeoi_readiness_badge(r["readiness"]))) for r in rows]
+    return Page(sess,
+        H1("AEOI readiness · FATCA / CRS"),
+        P("Automatic Exchange of Information readiness across the book. Each entity is "
+          "classified under CRS (Financial Institution vs Active / Passive NFE) and FATCA "
+          "(FFI / NFFE + GIIN), then validated for the documentation a return needs — "
+          "valid W-8 / self-certifications, treaty TINs, and controlling persons. "
+          "Modelled deterministically from each entity's profile; a human still signs off.",
+          cls="muted"),
+        headline, chips,
+        (Table(Tr(Th("Entity"), Th("Type"), Th("Domicile"), Th("CRS"), Th("FATCA"),
+                  Th("Errors"), Th("Warnings"), Th("Readiness")), *rows_ui)
+         if rows_ui else P("No entities match.", cls="muted")),
+        title="AEOI · TaxHub", ctx="aeoi")
+
+
+_W8_BADGE = {"ok": ("✓", "#1c7c44"), "error": ("⚠", "#c0392b"),
+             "warning": ("⚠", "#b06b00"), "empty": ("○", "#9a93a6")}
+
+
+def _w8_field(f):
+    sym, col = _W8_BADGE.get(f["badge"], _W8_BADGE["empty"])
+    return Div(
+        Div(Span(f"Line {f['line']}" if f["line"] != "—" else "", cls="w8ln"),
+            Label(f["label"], cls="w8lbl"),
+            Span(sym, cls="w8badge", id=f"badge-{f['id']}",
+                 title=f.get("hint") or "", style=f"color:{col}"),
+            cls="w8frow"),
+        Input(name=f["id"], id=f"w8-{f['id']}", value="", data_fill=f["value"],
+              cls="w8inp", autocomplete="off"),
+        Div(f.get("hint") or "", id=f"hint-{f['id']}", cls="w8hint",
+            style=("color:#c0392b" if f["badge"] == "error" else
+                   "color:#b06b00" if f["badge"] == "warning" else "color:var(--muted)")),
+        cls="w8field")
+
+
+def w8_render(data):
+    r = aeoi.READINESS.get(data["readiness"], aeoi.READINESS["review"])
+    sections = []
+    for s in data["sections"]:
+        sections.append(Div(
+            Div(Span(s["part"], cls="w8part"), Span(s["heading"], cls="w8head"),
+                cls="w8sec"),
+            *[_w8_field(f) for f in s["fields"]]))
+    return Div(
+        Div(Div(B(data["title"]), Span(" (demo facsimile)", cls="muted",
+                                       style="font-size:11px"),
+                Br(), Span(data["subtitle"], cls="muted", style="font-size:11px")),
+            cls="w8title"),
+        Div(Span("Status: "), Span(r["label"], id="w8readiness",
+            style=f"font-weight:700;color:{r['color']}"),
+            Span("  — agent filling from TaxHub data…", id="w8note", cls="muted",
+                 style="font-size:11px;margin-left:6px"),
+            cls="w8status"),
+        *sections,
+        Div(Button("Re-validate", cls="btn", type="button",
+                   onclick=f"revalidateW8({data['entity_id']})"),
+            Button("✓ Sign off", cls="btn", type="button",
+                   style="background:#1c7c44;margin-left:8px", onclick="signoffW8()"),
+            cls="w8actions"),
+        Div(id="w8stamp", cls="w8stamp"),
+        cls="w8form", data_entity=str(data["entity_id"]))
+
+
+@rt("/w8/{entity_id}")
+def w8_view(sess, entity_id: int):
+    if (r := require(sess)):
+        return r
+    e = store.get_entity(entity_id)
+    if not e:
+        return Div("Entity not found")
+    from datetime import date
+    data = w8form.fill(e, JUR_NAMES, date.today())
+    return w8_render(data)
+
+
+@rt("/w8/{entity_id}/revalidate", methods=["POST"])
+async def w8_revalidate(sess, request, entity_id: int):
+    if (require(sess)):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    e = store.get_entity(entity_id)
+    if not e:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    form = await request.form()
+    from datetime import date
+    return JSONResponse(w8form.revalidate(e, dict(form), date.today()))
+
+
+@rt("/coverage")
+def coverage_view(sess):
+    if (r := require(sess)):
+        return r
+    import json as _json
+    from web import coverage as cov
+    pf = cov.portfolio_matrix(store, OB_STATUS, team_id=team_scope(sess))
+    cat = cov.catalogue_matrix(store)
+
+    # ── Portfolio lens payload (entity × status) ────────────────────────────
+    p_rows = pf["rows"]
+    p_y = [r["name"] for r in p_rows]
+    p_x = [OB_STATUS_LABELS[s] for s in OB_STATUS]
+    p_z = [[r["counts"].get(s, 0) for s in OB_STATUS] for r in p_rows]
+    p_text = [[str(v) if v else "" for v in row] for row in p_z]
+    p_payload = {"x": p_x, "y": p_y, "z": p_z, "text": p_text}
+
+    # ── Catalogue lens payload (jurisdiction × category) ────────────────────
+    c_y = [JUR_NAMES.get(j, j) for j in cat["jurs"]]
+    c_x = [CATEGORY_LABELS.get(c, c) for c in cat["cats"]]
+    c_z = cat["count"]
+    c_text = [[str(v) if v else "" for v in row] for row in c_z]
+    # Hover: filing-type breakdown per cell.
+    c_hover = [["📄 %d · 🌐 %d · 📘 %d" % (cat["dl"][j][c], cat["on"][j][c], cat["ref"][j][c])
+                for c in range(len(cat["cats"]))] for j in range(len(cat["jurs"]))]
+    c_payload = {"x": c_x, "y": c_y, "z": c_z, "text": c_text, "hover": c_hover}
+
+    t = cat["totals"]
+    summary = Div(
+        Div(Span(f"{pf['pct']}%", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" of the book filed / confirmed", style="color:var(--muted)"),
+            Div(P(A(f"{pf['filed']} of {pf['total']} obligations", href="/obligations?status=filed"),
+                  " across ", A(f"{len(p_rows)} entities", href="/entities"),
+                  style="color:var(--muted);font-size:13px;margin:4px 0 0")),
+            style="flex:1;min-width:240px"),
+        Div(Span(f"{t['forms']}", style="font-size:30px;font-weight:700;color:var(--navy)"),
+            Span(" forms in the catalogue", style="color:var(--muted)"),
+            Div(P(f"{t['jurisdictions']} jurisdictions · 📄 {t['downloadable']} downloadable · "
+                  f"🌐 {t['online']} online · 📘 {t['reference']} reference",
+                  style="color:var(--muted);font-size:13px;margin:4px 0 0")),
+            style="flex:1;min-width:240px"),
+        style="display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px")
+
+    data_script = Script(f"window.PFCOV={_json.dumps(p_payload)};"
+                         f"window.CATCOV={_json.dumps(c_payload)};")
+    plot_js = Script("""
+function heat(id, d, opts){
+  var trace={type:'heatmap',x:d.x,y:d.y,z:d.z,xgap:2,ygap:2,
+    text:d.text,texttemplate:'%{text}',textfont:{size:12,color:'#2b2b30'},
+    colorscale:opts.scale,showscale:false,zmin:0,
+    hoverongaps:false};
+  if(d.hover){trace.customdata=d.hover;
+    trace.hovertemplate='%{y} · %{x}<br>%{z} form(s)<br>%{customdata}<extra></extra>';}
+  else{trace.hovertemplate='%{y} · %{x}<br>%{z} obligation(s)<extra></extra>';}
+  var h=Math.max(160, d.y.length*30+90);
+  Plotly.react(id,[trace],{margin:{l:170,r:10,t:10,b:70},height:h,
+    xaxis:{side:'top',tickangle:-25,automargin:true,fixedrange:true},
+    yaxis:{automargin:true,autorange:'reversed',fixedrange:true}},
+    {responsive:true,displayModeBar:false});
+}
+var PUR=[[0,'#faf7fb'],[0.5,'#d3a9d0'],[1,'#6b1766']];
+var GRN=[[0,'#f5faf6'],[0.5,'#9fcfb0'],[1,'#1c7c44']];
+function drawCoverage(){
+  if(!window.Plotly){return setTimeout(drawCoverage,60);}
+  if(window.PFCOV&&document.getElementById('pfcov'))heat('pfcov',window.PFCOV,{scale:PUR});
+  if(window.CATCOV&&document.getElementById('catcov'))heat('catcov',window.CATCOV,{scale:GRN});
+}
+drawCoverage();
+window.addEventListener('resize',function(){if(window.Plotly){
+  if(document.getElementById('pfcov'))Plotly.Plots.resize('pfcov');
+  if(document.getElementById('catcov'))Plotly.Plots.resize('catcov');}});
+""")
+    return Page(sess, 
+        H1("Coverage map"),
+        P("Two lenses on coverage: how much of the client book is filed, and how "
+          "thick our form catalogue is across jurisdictions and categories.", cls="muted"),
+        summary,
+        H2("Portfolio coverage", style="margin-top:18px"),
+        P("Each entity's obligations by file-status — darker = more obligations in "
+          "that state. Filed/Confirmed columns are the compliant book.", cls="muted"),
+        (Div(id="pfcov") if p_rows else P("No entities yet.", cls="muted")),
+        H2("Catalogue coverage", style="margin-top:22px"),
+        P("Forms held per jurisdiction × category. Hover a cell for the filing-type "
+          "breakdown (📄 downloadable · 🌐 online · 📘 reference).", cls="muted"),
+        (Div(id="catcov") if cat["jurs"] else P("No forms yet.", cls="muted")),
+        PLOTLY, data_script, plot_js,
+        title="Coverage · TaxHub", ctx="coverage")
+
+
+@rt("/admin/digest")
+def admin_digest(sess, request, horizon: int = 90):
+    """Machine-readable deadline digest (overdue + upcoming) — the foundation for
+    email/Slack alerts. Gated by session or X-Admin-Token."""
+    if require(sess) and not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    from datetime import date
+    return JSONResponse(monitor.deadline_digest(store, date.today(), horizon_days=horizon))
+
+
+@rt("/entity/{entity_id}/delete", methods=["POST"])
+def entity_delete(sess, entity_id: int):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    store.delete_entity(entity_id)
+    return RedirectResponse("/entities", status_code=303)
+
+
+@rt("/admin/seed-entities", methods=["POST"])
+def seed_entities(sess, request):
+    if not _admin_ok(sess, request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    ids = [store.upsert_entity(e) for e in SAMPLE_ENTITIES]
+    return JSONResponse({"seeded": len(ids), "total": store.count_entities()})
+
+
+@rt("/documents")
+def documents(sess, uploaded: str = ""):
+    if (r := require(sess)):
+        return r
+    forms = store.list_forms(limit=2000)
+    with_pdf = [f for f in forms if f.get("file_path")]
+    cats = sorted({f.get("category") or "other" for f in forms})
+    jurs = sorted({f["jurisdiction_code"] for f in forms}) or list(JUR_NAMES)
+    upload = Form(
+        H2("Upload a document"),
+        (P("✓ Uploaded.", style="color:#1c7c44") if uploaded else ""),
+        Div(
+            Input(type="file", name="doc_file", accept="application/pdf", required=True),
+            style="margin:8px 0"),
+        Div(Input(name="title", placeholder="Title (optional)", style="width:48%"),
+            Select(*[Option(JUR_NAMES.get(j, j), value=j) for j in jurs], name="jurisdiction",
+                   style="width:24%;margin:0 1%"),
+            Select(*[Option(CATEGORY_LABELS.get(c, c), value=c) for c in
+                     ["uploaded", "corporate_tax", "economic_substance", "aeoi",
+                      "beneficial_ownership", "fund", "other"]], name="category",
+                   style="width:24%"),
+            style="display:flex;gap:6px;align-items:center"),
+        Button("Upload PDF", cls="btn", style="margin-top:10px"),
+        method="post", action="/upload", enctype="multipart/form-data")
+    filterbar = Div(
+        Input(id="docsearch", placeholder="Search documents…", oninput="filterDocs()",
+              style="flex:1;padding:8px;border:1px solid #e3e6eb;border-radius:7px"),
+        Select(Option("All jurisdictions", value=""),
+               *[Option(JUR_NAMES.get(j, j), value=j) for j in jurs],
+               id="docjur", onchange="filterDocs()", style="padding:8px"),
+        Select(Option("All categories", value=""),
+               *[Option(CATEGORY_LABELS.get(c, c), value=c) for c in cats],
+               id="doccat", onchange="filterDocs()", style="padding:8px"),
+        Select(Option("All filing types", value=""),
+               *[Option(v, value=k) for k, v in FILING_LABELS.items()],
+               id="docfiling", onchange="filterDocs()", style="padding:8px"),
+        style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap")
+    rows = [Tr(Td(f["jurisdiction_code"]),
+               Td(FILING_LABELS.get(f.get("filing_type") or "downloadable", "")),
+               Td(CATEGORY_LABELS.get(f.get("category"), f.get("category") or "")),
+               Td(A(f["title"], href=f"/form/{f['id']}")),
+               Td("📄" if f.get("file_path") else "link"),
+               cls="docrow", **{"data-j": f["jurisdiction_code"], "data-c": f.get("category") or "",
+                                "data-f": f.get("filing_type") or "downloadable",
+                                "data-t": (f["title"] or "").lower()})
+            for f in with_pdf]
+    browser = Table(Tr(Th("Jur"), Th("Filing type"), Th("Category"), Th("Document"), Th("PDF")),
+                    *rows, id="doctable")
+    js = Script("""
+function filterDocs(){var q=document.getElementById('docsearch').value.toLowerCase();
+  var j=document.getElementById('docjur').value,c=document.getElementById('doccat').value,
+      ff=document.getElementById('docfiling').value,n=0;
+  document.querySelectorAll('#doctable tr.docrow').forEach(function(r){
+    var ok=(!q||r.dataset.t.indexOf(q)>=0)&&(!j||r.dataset.j===j)&&(!c||r.dataset.c===c)
+      &&(!ff||r.dataset.f===ff);
+    r.style.display=ok?'':'none';if(ok)n++;});
+  document.getElementById('doccount').textContent=n;}
+""")
+    return Page(sess, H1("Documents"),
+                P(Span(str(len(with_pdf)), id="doccount"), f" of {len(forms)} documents shown · "
+                  "search and filter below, or upload a new PDF (pushed to the server volume).",
+                  cls="muted"),
+                upload, H2("Stored documents"), filterbar, browser, js,
+                title="Documents · TaxHub", ctx="documents")
+
+
+@rt("/upload", methods=["POST"])
+async def upload(sess, doc_file: UploadFile, jurisdiction: str = "JE",
+                 category: str = "uploaded", title: str = ""):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from pathlib import Path
+    from ingest.scrapers.base import slugify
+    data = await doc_file.read()
+    name = title.strip() or (doc_file.filename or "document").rsplit(".", 1)[0]
+    key = "upload_" + (slugify(name) or "doc")
+    root = Path(__file__).resolve().parent.parent
+    dest = root / "data" / "forms" / jurisdiction / f"{key}.pdf"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    store.upsert_jurisdiction(jurisdiction, JUR_NAMES.get(jurisdiction, jurisdiction))
+    store.upsert_form({
+        "jurisdiction_code": jurisdiction, "category": category, "form_type": "form",
+        "form_key": key, "title": name[:160], "authority": "Uploaded",
+        "url": None, "file_path": str(dest.relative_to(root)), "filing_type": "downloadable"})
+    return RedirectResponse("/documents?uploaded=1", status_code=303)
+
+
+AUDIT = [
+    ("Luxembourg (ACD)", "Complete & submit PDF", "126 real fillable forms (200/300/500/710…)", "downloadable"),
+    ("Guernsey (gov.gg)", "PDF forms (main return online)", "71 real forms (registration, tax-cap returns…)", "downloadable"),
+    ("Jersey (Revenue Jersey)", "Online portal", "No downloadable form", "online"),
+    ("Ireland (Revenue)", "ROS e-file", "PDFs are TDM guidance, not forms", "online + reference"),
+    ("Cayman (DITC)", "DITC portal", "PDFs are user guides", "online + reference"),
+    ("BVI (ITA)", "BOSS portal (via agent)", "PDFs are guidance/methodology", "online + reference"),
+]
+
+
+@rt("/help")
+def help_page(sess):
+    if (r := require(sess)):
+        return r
+    legend = Div(*[Div(Span(v, style="font-weight:600"), cls="",
+                       style="padding:6px 0") for v in FILING_LABELS.values()])
+    audit = Table(
+        Tr(Th("Jurisdiction"), Th("How you actually file"), Th("What the site offers"), Th("filing_type")),
+        *[Tr(Td(j), Td(how), Td(offers), Td(ft)) for j, how, offers, ft in AUDIT])
+    shortcuts = Table(Tr(Th("Shortcut"), Th("Does")),
+                      *[Tr(Td(Code(p)), Td(desc)) for p, desc, _ in SHORTCUTS])
+    return Page(sess, 
+        H1("Help & User Guide"),
+        P("TaxHub helps a fund back office find the correct tax form to file, with "
+          "provenance back to the underlying law. Use the AI Assistant for free-text "
+          "questions, the Forms Tree to browse, or the shortcuts below.", cls="muted"),
+        P(A("📖 Open the User Guide (HTML slides)", href="/docs/taxhub_user_guide.html", target="_blank", cls="btn"), " ",
+          A("⬇ Download the full User Guide (PDF)", href="/user-guide-pdf", cls="btn"), " ",
+          A("🛠 Technical Guide (architecture & Azure deployment)", href="/technical-guide", cls="btn")),
+        H2("Filing types"),
+        P("Every form is labelled by how it is filed:"),
+        legend,
+        H2("Coverage audit — what each authority actually offers"),
+        P("Not every jurisdiction publishes downloadable forms; several file online. "
+          "We capture this honestly so you know what to expect:", cls="muted"),
+        audit,
+        H2("Assistant shortcuts"),
+        shortcuts,
+        H2("The Forms Tree"),
+        P("Browse by Jurisdiction → category (corporate tax, economic substance, AEOI…) "
+          "→ document type → form. Click any form to open its PDF (or the official portal "
+          "link for online-filed forms) in the right pane."),
+        title="Help · TaxHub")
+
+
+@rt("/user-guide-pdf")
+def user_guide_pdf(sess):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "docs" / "taxhub_user_guide.pdf"
+    if not p.exists():
+        return Page(sess, H1("User guide PDF not generated yet"),
+                    P("Run scripts/generate_user_guide.py.", cls="muted"))
+    return Response(p.read_bytes(), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="taxhub_user_guide.pdf"'})
+
+
+def _technical_guide_html():
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "docs" / "architecture_readme.html"
+    return p.read_text() if p.exists() else None
+
+
+@rt("/technical-guide")
+def technical_guide(sess):
+    """Architecture & Azure-deployment guide — the generated self-contained HTML
+    (with the rendered architecture diagram) shown inside the 3-pane shell."""
+    if (r := require(sess)):
+        return r
+    html = _technical_guide_html()
+    if not html:
+        return Page(sess, H1("Technical Guide not generated yet"),
+                    P("Run ", Code("python3.12 scripts/generate_architecture_html.py"),
+                      " to build docs/architecture_readme.html.", cls="muted"),
+                    title="Technical Guide · TaxHub")
+    body = html.split("<body>", 1)[1].rsplit("</body>", 1)[0] if "<body>" in html else html
+    return Page(sess,
+        Div(A("⬇ Open standalone HTML", href="/technical-guide.html", target="_blank", cls="btn"),
+            style="margin-bottom:14px"),
+        # Scope the doc's figure/diagram styling so it doesn't fight the app CSS.
+        Style(".techguide figure{margin:18px 0;text-align:center}"
+              ".techguide figure img{max-width:100%;border:1px solid var(--line);"
+              "border-radius:8px;padding:10px;background:#fff}"
+              ".techguide figcaption{color:var(--muted);font-size:12.5px;margin-top:6px}"
+              ".techguide pre{background:#f5f6f4;border:1px solid var(--line);border-radius:6px;"
+              "padding:12px 14px;font-size:12.5px;overflow-x:auto}"
+              ".techguide .toc{background:#f5f6f4;border:1px solid var(--line);border-radius:8px;padding:8px 16px}"
+              ".techguide .toc ul{list-style:none;padding-left:14px}"),
+        Div(NotStr(body), cls="techguide"),
+        title="Technical Guide · TaxHub")
+
+
+@rt("/technical-guide.html")
+def technical_guide_raw(sess):
+    if (require(sess)):
+        return RedirectResponse("/login", status_code=303)
+    html = _technical_guide_html()
+    if not html:
+        return Response("Not generated", status_code=404)
+    return Response(html, media_type="text/html")
+
+
+
+
+@rt("/changes")
+def changes_page(sess, j: str = None):
+    if (r := require(sess)):
+        return r
+    chs = store.recent_changes(60, jurisdiction_code=j)
+    return Page(sess, H1("Recent changes"),
+        *[Div(Div(Span(c.get("change_type", ""), cls=f"pill {c.get('change_type','')}"), " ",
+                  f"{c['jurisdiction_code']} · {(c.get('detected_at') or '')[:10]}", cls="meta"),
+              Div(A(c["title"], href=f"/document/{c.get('document_id')}"),
+                  style="font-weight:600"),
+              (Div(c["ai_summary"], style="margin-top:4px;color:#6b7686")
+               if c.get("ai_summary") else ""), cls="feed-item")
+          for c in chs],
+        ctx="changes")

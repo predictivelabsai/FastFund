@@ -1,0 +1,525 @@
+# TaxHub — LEGISLATIVE SOURCES catalogue (the law / provenance corpus).
+#
+# ⚠ This file lists LEGISLATION, GUIDANCE, CIRCULARS, GAZETTES and TREATIES only —
+#   the primary law that tax forms implement. Scraped into (:Document)->(:Version)
+#   nodes; powers citation/change traceability and the law_agent graph-RAG. This is
+#   the SECONDARY corpus.
+#
+#   TAX FORMS — the PRIMARY corpus the product is built around — live in a SEPARATE
+#   file, config/tax_forms.yaml, stored as distinct (:Form) nodes. Forms link back
+#   to the relevant law here via `legislation_ref` (the law is linked, not duplicated).
+#
+# Structure:
+#   jurisdictions:
+#     <CODE>:
+#       name / region / authority
+#       sources:
+#         - name:        short source id (stored on each document)
+#           delay:       seconds to wait between fetches (politeness)
+#           documents:
+#             - id:        stable slug (unique within jurisdiction)
+#               title:     official title
+#               doc_type:  legislation | guidance | gazette | treaty
+#               reference: statutory citation (optional)
+#               url:       exact document URL
+#               format:    html | pdf
+#               fetch:     http | browser
+#               selector:  CSS selector to pin extraction (html only, optional)
+#
+# YAML merge anchors keep per-document records terse.
+
+_anchors:
+  jersey_law: &jersey_law
+    doc_type: legislation
+    format: pdf            # official consolidated PDF — bypasses jerseylaw.je JS/UA gating
+    fetch: http
+  pdf_http: &pdf_http
+    format: pdf
+    fetch: http
+  html_http: &html_http
+    format: html
+    fetch: http
+  browser_main: &browser_main        # JS/UA-gated gov sites (gov.je, gov.gg)
+    format: html
+    fetch: browser
+    selector: "main"
+    min_text: 800
+
+jurisdictions:
+
+  # ──────────────────────────────────────────────────────────────────────
+  JE:
+    name: Jersey
+    region: Crown Dependencies
+    authority: Revenue Jersey (Comptroller of Revenue)
+    sources:
+      - name: jerseylaw
+        delay: 1.0
+        documents:
+          - id: income_tax_law_1961
+            title: Income Tax (Jersey) Law 1961
+            reference: L.29/1961
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_29_1961.pdf
+            tags: [income-tax, primary]
+            <<: *jersey_law
+          - id: revenue_administration_law_2019
+            title: Revenue Administration (Jersey) Law 2019
+            reference: L.13/2019
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_13_2019.pdf
+            tags: [administration]
+            <<: *jersey_law
+          - id: economic_substance_companies_2019
+            title: Taxation (Companies – Economic Substance) (Jersey) Law 2019
+            reference: L.3/2019
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_3_2019.pdf
+            tags: [economic-substance]
+            <<: *jersey_law
+          - id: economic_substance_partnerships_2021
+            title: Taxation (Partnerships – Economic Substance) (Jersey) Law 2021
+            reference: L.12/2021
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_12_2021.pdf
+            tags: [economic-substance, partnerships]
+            <<: *jersey_law
+          - id: taxation_implementation_law_2004
+            title: Taxation (Implementation) (Jersey) Law 2004
+            reference: L.28/2004
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_28_2004.pdf
+            tags: [international]
+            <<: *jersey_law
+          - id: crs_regulations_2015
+            title: Taxation (Implementation) (International Tax Compliance) (Common Reporting Standard) (Jersey) Regulations 2015
+            reference: R&O.148/2015
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_148_2015.pdf
+            tags: [crs, exchange-of-information]
+            <<: *jersey_law
+          - id: fatca_usa_regulations_2014
+            title: Taxation (Implementation) (International Tax Compliance) (United States of America) (Jersey) Regulations 2014
+            reference: R&O.69/2014
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_69_2014.pdf
+            tags: [fatca, exchange-of-information]
+            <<: *jersey_law
+          - id: cbcr_beps_regulations_2016
+            title: "Taxation (Implementation) (International Tax Compliance) (Country-by-Country Reporting: BEPS) (Jersey) Regulations 2016"
+            reference: R&O.128/2016
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_128_2016.pdf
+            tags: [cbcr, beps]
+            <<: *jersey_law
+          - id: carf_regulations_2025
+            title: Taxation (International Tax Compliance) (Crypto-Asset Reporting Framework) (Jersey) Regulations 2025
+            reference: R&O.96/2025
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_96_2025.pdf
+            tags: [carf, crypto, exchange-of-information]
+            <<: *jersey_law
+          - id: mutual_assistance_regulations_2014
+            title: Taxation (Implementation) (Convention on Mutual Administrative Assistance in Tax Matters) (Jersey) Regulations 2014
+            reference: R&O.7/2014
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_7_2014.pdf
+            tags: [exchange-of-information, treaty]
+            <<: *jersey_law
+          - id: multinational_corporate_income_tax_law_2025
+            title: Multinational Corporate Income Tax (Jersey) Law 2025
+            reference: L.7/2025
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_7_2025.pdf
+            tags: [pillar-two, globe]
+            <<: *jersey_law
+          - id: globe_iir_tax_law_2025
+            title: Multinational Taxation (Global Anti-Base Erosion – IIR Tax) (Jersey) Law 2025
+            reference: L.8/2025
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_8_2025.pdf
+            tags: [pillar-two, globe, iir]
+            <<: *jersey_law
+          - id: gst_law_2007
+            title: Goods and Services Tax (Jersey) Law 2007
+            reference: L.27/2007
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_27_2007.pdf
+            tags: [gst]
+            <<: *jersey_law
+          - id: gst_ise_regulations_2008
+            title: Goods and Services Tax (International Services Entities) (Jersey) Regulations 2008
+            reference: R&O.39/2008
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_39_2008.pdf
+            tags: [gst, ise]
+            <<: *jersey_law
+          - id: enveloped_property_transactions_law_2022
+            title: Taxation (Enveloped Property Transactions) (Jersey) Law 2022
+            reference: L.18/2022
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_18_2022.pdf
+            tags: [property]
+            <<: *jersey_law
+          - id: land_transactions_law_2009
+            title: Taxation (Land Transactions) (Jersey) Law 2009
+            reference: L.10/2009
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_10_2009.pdf
+            tags: [property, ltt]
+            <<: *jersey_law
+          - id: stamp_duties_fees_law_1998
+            title: Stamp Duties and Fees (Jersey) Law 1998
+            reference: L.8/1998
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_8_1998.pdf
+            tags: [stamp-duty]
+            <<: *jersey_law
+          - id: accounting_records_regulations_2013
+            title: Taxation (Accounting Records) (Jersey) Regulations 2013
+            reference: R&O.73/2013
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_73_2013.pdf
+            tags: [records]
+            <<: *jersey_law
+          - id: double_taxation_regulations_2010
+            title: Taxation (Double Taxation) (Jersey) Regulations 2010
+            reference: R&O.55/2010
+            url: https://www.jerseylaw.je/laws/current/PDFs/RO_55_2010.pdf
+            tags: [double-taxation, treaty]
+            <<: *jersey_law
+          - id: public_finances_law_2019
+            title: Public Finances (Jersey) Law 2019
+            reference: L.10/2019
+            url: https://www.jerseylaw.je/laws/current/PDFs/L_10_2019.pdf
+            tags: [public-finances]
+            <<: *jersey_law
+      # gov.je serves a JS cookie/UA wall that only intermittently renders
+      # content to headless Chromium. Disabled until a stealth browser is added;
+      # the primary Jersey value (consolidated laws above) is unaffected.
+      - name: gov.je
+        enabled: false
+        delay: 1.0
+        documents:
+          - id: rj_economic_substance_guidance
+            title: Economic substance for Jersey companies and partnerships (Revenue Jersey)
+            doc_type: guidance
+            url: https://www.gov.je/TaxesMoney/IncomeTax/Companies/Guidelines/pages/economicsubstanceforcompanies.aspx
+            tags: [economic-substance, guidance]
+            <<: *browser_main
+          - id: rj_crs_guidance
+            title: "Automatic exchange of information: Common Reporting Standard (Revenue Jersey)"
+            doc_type: guidance
+            url: https://www.gov.je/TaxesMoney/InternationalTaxAgreements/IGAs/pages/commonreportingstandard.aspx
+            tags: [crs, guidance]
+            <<: *browser_main
+          - id: rj_zero_ten_guidance
+            title: Zero / ten tax system for companies (Revenue Jersey)
+            doc_type: guidance
+            url: https://www.gov.je/TaxesMoney/IncomeTax/Companies/ZeroTen/pages/index.aspx
+            tags: [corporate-tax, guidance]
+            <<: *browser_main
+
+  # ──────────────────────────────────────────────────────────────────────
+  GG:
+    name: Guernsey
+    region: Crown Dependencies
+    authority: Revenue Service (States of Guernsey)
+    sources:
+      # guernseylegalresources.gg is behind a Cloudflare bot challenge that
+      # headless Chromium cannot clear. Disabled until a stealth/solver browser
+      # is added. gov.gg PDFs below provide the substantive Guernsey corpus.
+      - name: guernseylegalresources
+        enabled: false
+        delay: 1.5
+        documents:
+          - id: income_tax_law_1975
+            title: "Income Tax (Guernsey) Law, 1975 (consolidated text)"
+            doc_type: legislation
+            url: https://www.guernseylegalresources.gg/laws/guernsey-bailiwick/t/taxation/income-tax/income-tax-guernsey-law-1975-consolidated-text/
+            format: html
+            fetch: browser
+            tags: [income-tax, primary]
+      - name: gov.gg
+        delay: 1.0
+        documents:
+          - id: substance_requirements_regs_2021
+            title: "Income Tax (Substance Requirements) (Implementation) Regulations, 2021"
+            doc_type: legislation
+            url: https://www.gov.gg/CHttpHandler.ashx?id=141223&p=0
+            tags: [economic-substance]
+            <<: *pdf_http
+          - id: economic_substance_guidance_v2
+            title: "Guidance on the Application of the Substance Requirements (Version 2)"
+            doc_type: guidance
+            url: https://www.gov.gg/CHttpHandler.ashx?id=122152&p=0
+            tags: [economic-substance, guidance]
+            <<: *pdf_http
+          - id: circular_14_self_managed_funds
+            title: "Circular 14 — Economic Substance: Self-Managed Funds"
+            doc_type: guidance
+            url: https://www.gov.gg/CHttpHandler.ashx?id=130490&p=0
+            tags: [economic-substance, funds]
+            <<: *pdf_http
+          - id: fatca_us_iga
+            title: "Guernsey–USA FATCA Intergovernmental Agreement"
+            doc_type: treaty
+            url: https://www.gov.gg/CHttpHandler.ashx?id=85351&p=0
+            tags: [fatca, treaty]
+            <<: *pdf_http
+          - id: aeoi_implementation_regs_2014
+            title: "Income Tax (Approved International Agreements) (Implementation) (UK and USA) Regulations, 2014"
+            doc_type: legislation
+            url: https://www.gov.gg/CHttpHandler.ashx?id=91585&p=0
+            tags: [fatca, crs]
+            <<: *pdf_http
+          - id: crs_fatca_compliance_notice_2024
+            title: "Compliance Information Notice 2024 (1) — CRS & FATCA"
+            doc_type: guidance
+            url: https://www.gov.gg/CHttpHandler.ashx?id=175768&p=0
+            tags: [crs, fatca, guidance]
+            <<: *pdf_http
+          - id: sop_c54_fund_administration
+            title: "Statement of Practice C54 — Fund Administration"
+            doc_type: guidance
+            url: https://www.gov.gg/CHttpHandler.ashx?id=96404&p=0
+            tags: [funds, statement-of-practice]
+            <<: *pdf_http
+          - id: sop_c57_investment_management
+            title: "Statement of Practice C57 — Investment Management Services"
+            doc_type: guidance
+            url: https://www.gov.gg/CHttpHandler.ashx?id=150214&p=0
+            tags: [funds, statement-of-practice]
+            <<: *pdf_http
+          - id: statements_of_practice_index
+            title: "Income Tax Statements of Practice & Circulars (index)"
+            doc_type: guidance
+            url: https://www.gov.gg/taxationstatementsofpractice
+            tags: [index]
+            <<: *html_http
+
+  # ──────────────────────────────────────────────────────────────────────
+  LU:
+    name: Luxembourg
+    region: Europe
+    authority: Administration des contributions directes (ACD)
+    sources:
+      - name: impotsdirects
+        delay: 1.0
+        documents:
+          - id: lir_income_tax_law
+            title: "Loi modifiée du 4 décembre 1967 concernant l'impôt sur le revenu (L.I.R.) — texte coordonné"
+            doc_type: legislation
+            url: https://impotsdirects.public.lu/dam-assets/fr/legislation/LIR/texte-coordonn-en-vigueur-au-1er-janvier-2026-ver-08052026.pdf
+            tags: [income-tax, primary]
+            <<: *pdf_http
+          - id: circ_lir_56_1_transfer_pricing
+            title: "Circulaire L.I.R. n° 56/1 – 56bis/1 du 27 décembre 2016 (prix de transfert)"
+            doc_type: guidance
+            url: https://impotsdirects.public.lu/dam-assets/fr/legislation/legi16/circulairelir561-56bis1-27122016.pdf
+            tags: [transfer-pricing, circular]
+            <<: *pdf_http
+      - name: legilux
+        delay: 1.0
+        documents:
+          - id: fatca_law_2015
+            title: "Loi du 24 juillet 2015 portant approbation de l'accord FATCA Luxembourg–États-Unis"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2015/07/24/n1/jo/fr/html/eli-etat-leg-loi-2015-07-24-n1-jo-fr-html.html
+            tags: [fatca]
+            <<: *html_http
+          - id: crs_ncd_law_2015
+            title: "Loi du 18 décembre 2015 — échange automatique de renseignements sur les comptes financiers (NCD/CRS)"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2015/12/18/n4/jo/fr/html/eli-etat-leg-loi-2015-12-18-n4-jo-fr-html.html
+            tags: [crs]
+            <<: *html_http
+          - id: dac6_law_2020
+            title: "Loi du 25 mars 2020 relative aux dispositifs transfrontières devant faire l'objet d'une déclaration (DAC6)"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2020/03/25/a192/jo/fr/html/eli-etat-leg-loi-2020-03-25-a192-jo-fr-html.html
+            tags: [dac6]
+            <<: *html_http
+          - id: raif_law_2016
+            title: "Loi du 23 juillet 2016 relative aux fonds d'investissement alternatifs réservés (RAIF/FIAR)"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2016/07/23/n7/jo/fr/html/eli-etat-leg-loi-2016-07-23-n7-jo-fr-html.html
+            tags: [funds, raif]
+            <<: *html_http
+          - id: sif_law_2007
+            title: "Loi du 13 février 2007 relative aux fonds d'investissement spécialisés (SIF/FIS)"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2007/02/13/n1/jo/fr/html/eli-etat-leg-loi-2007-02-13-n1-jo-fr-html.html
+            tags: [funds, sif]
+            <<: *html_http
+          - id: ucits_law_2010
+            title: "Loi du 17 décembre 2010 concernant les organismes de placement collectif (OPC/OPCVM — UCITS)"
+            doc_type: legislation
+            url: https://data.legilux.public.lu/filestore/eli/etat/leg/loi/2010/12/17/n9/jo/fr/html/eli-etat-leg-loi-2010-12-17-n9-jo-fr-html.html
+            tags: [funds, ucits]
+            <<: *html_http
+
+  # ──────────────────────────────────────────────────────────────────────
+  IE:
+    name: Ireland
+    region: Europe
+    authority: Revenue Commissioners
+    sources:
+      - name: irishstatutebook
+        delay: 1.0
+        documents:
+          - id: taxes_consolidation_act_1997
+            title: "Taxes Consolidation Act 1997 (No. 39 of 1997)"
+            doc_type: legislation
+            url: https://www.irishstatutebook.ie/eli/1997/act/39/enacted/en/html
+            tags: [primary, corporation-tax]
+            <<: *html_http
+      - name: revenue.ie
+        delay: 1.0
+        documents:
+          - id: tdm_27_01a_02_investment_undertakings
+            title: "TDM Part 27-01A-02 — Investment Undertakings (gross roll-up)"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-27/27-01a-02.pdf
+            tags: [funds, investment-undertakings]
+            <<: *pdf_http
+          - id: tdm_27_04_01_offshore_funds
+            title: "TDM Part 27-04-01 — Offshore Funds"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-27/27-04-01.pdf
+            tags: [funds, offshore-funds]
+            <<: *pdf_http
+          - id: tdm_27_01b_02_iref
+            title: "TDM Part 27-01B-02 — Irish Real Estate Fund (IREF)"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-27/27-01b-02.pdf
+            tags: [funds, iref]
+            <<: *pdf_http
+          - id: tdm_38_03_22_fatca
+            title: "TDM Part 38-03-22 — Implementation of FATCA in Ireland"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-38/38-03-22.pdf
+            tags: [fatca]
+            <<: *pdf_http
+          - id: tdm_38_03_23_crs_faqs
+            title: "TDM Part 38-03-23 — CRS FAQs"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-38/38-03-23.pdf
+            tags: [crs]
+            <<: *pdf_http
+          - id: tdm_38_03_26_crs_dac2_filing
+            title: "TDM Part 38-03-26 — Filing Guidelines for DAC2-CRS"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-38/38-03-26.pdf
+            tags: [crs, dac2]
+            <<: *pdf_http
+          - id: tdm_35d_01_01_interest_limitation
+            title: "TDM Part 35D-01-01 — Interest Limitation Rule (ATAD ILR)"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-35d/35D-01-01.pdf
+            tags: [atad, ilr]
+            <<: *pdf_http
+          - id: tdm_04_09_01_section_110
+            title: "TDM Part 04-09-01 — Section 110 companies"
+            doc_type: guidance
+            url: https://www.revenue.ie/en/tax-professionals/tdm/income-tax-capital-gains-tax-corporation-tax/part-04/04-09-01.pdf
+            tags: [section-110, spv]
+            <<: *pdf_http
+
+  # ──────────────────────────────────────────────────────────────────────
+  KY:
+    name: Cayman Islands
+    region: Caribbean
+    authority: Department for International Tax Cooperation (DITC) / Tax Information Authority
+    sources:
+      - name: ditc.ky
+        delay: 1.0
+        documents:
+          - id: crs_guidelines
+            title: "Cayman CRS Guidelines"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/ditc_crs_guidelines.pdf
+            tags: [crs, guidance]
+            <<: *pdf_http
+          - id: crs_enforcement_guidelines
+            title: "CRS Enforcement Guidelines"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/CRS-Enforcement-Guidelines.pdf
+            tags: [crs, enforcement]
+            <<: *pdf_http
+          - id: fatca_guidance_notes
+            title: "FATCA Guidance Notes (Cayman Islands TIA)"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/2020/06/FATCA_Guidance_Notes.pdf
+            tags: [fatca, guidance]
+            <<: *pdf_http
+          - id: economic_substance_guidance
+            title: "Economic Substance for Geographically Mobile Activities — Guidance Notes"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/Economic-Substance-Guidance.pdf
+            tags: [economic-substance, guidance]
+            <<: *pdf_http
+          - id: economic_substance_act
+            title: "International Tax Co-operation (Economic Substance) Act"
+            doc_type: legislation
+            url: https://www.ditc.ky/wp-content/uploads/DITC-Economic-Substance-Act.pdf
+            tags: [economic-substance, primary]
+            <<: *pdf_http
+          - id: cbcr_guidelines
+            title: "Country-by-Country Reporting (CbCR) Guidelines"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/CbCR_Guidelines.pdf
+            tags: [cbcr, guidance]
+            <<: *pdf_http
+          - id: carf_quick_guide
+            title: "Crypto-Asset Reporting Framework (CARF) Quick Guide"
+            doc_type: guidance
+            url: https://www.ditc.ky/wp-content/uploads/CARF_Quick_Guide.pdf
+            tags: [carf, crypto]
+            <<: *pdf_http
+      - name: legislation.gov.ky
+        delay: 1.0
+        documents:
+          - id: tax_information_authority_act_2021
+            title: "Tax Information Authority Act (2021 Revision)"
+            doc_type: legislation
+            url: https://legislation.gov.ky/cms/images/LEGISLATION/PRINCIPAL/2005/2005-0001/2005-0001_2021%20Revision.pdf
+            tags: [primary, exchange-of-information]
+            <<: *pdf_http
+
+  # ──────────────────────────────────────────────────────────────────────
+  VG:
+    name: British Virgin Islands
+    region: Caribbean
+    authority: International Tax Authority (ITA)
+    sources:
+      - name: bvi.gov.vg
+        delay: 1.0
+        documents:
+          - id: es_act_2018
+            title: "Economic Substance (Companies and Limited Partnerships) Act, 2018 (No. 12 of 2018)"
+            doc_type: legislation
+            url: https://www.bvi.gov.vg/pub/Economic%20Substance%20Companies%20and%20Limited%20Partnerships%20Act%202018%20No%2012%20of%202018.pdf
+            tags: [economic-substance, primary]
+            <<: *pdf_http
+      - name: bviita.vg
+        delay: 1.0
+        documents:
+          - id: es_act_2019_amendment
+            title: "Economic Substance (Companies and Limited Partnerships) (Amendment) Act, 2019 (No. 2 of 2019)"
+            doc_type: legislation
+            url: https://bviita.vg/wp-content/uploads/2021/02/Economic-Substance-Companies-and-Limited-Partnerships-Amendment-Act-2019-No.-2-of-2019.pdf
+            tags: [economic-substance]
+            <<: *pdf_http
+          - id: es_ita_rules_v4
+            title: "Economic Substance: Rules and Explanatory Notes (ITA Rules), Version 4"
+            doc_type: guidance
+            url: https://bviita.vg/wp-content/uploads/2024/04/ITA-Rules-v4-final.pdf
+            tags: [economic-substance, rules]
+            <<: *pdf_http
+          - id: fatca_guidance_notes
+            title: "BVI Guidance Notes on US FATCA"
+            doc_type: guidance
+            url: https://bviita.vg/wp-content/uploads/2020/05/guidance_notes_20-3-15_-_final_2.pdf
+            tags: [fatca, guidance]
+            <<: *pdf_http
+          - id: crs_guidance_notes_v2_1
+            title: "BVI CRS Guidance Notes, Version 2.1"
+            doc_type: guidance
+            url: https://bviita.vg/wp-content/uploads/2022/08/BVI-CRS-guidance-notes-Version2.1.pdf
+            tags: [crs, guidance]
+            <<: *pdf_http
+          - id: cbcr_guidance_notes
+            title: "BVI Guidance Notes for Country-by-Country Reporting"
+            doc_type: guidance
+            url: https://bviita.vg/wp-content/uploads/2020/06/Guidance-Notes-for-Country-by-Country-Reporting-final-version-updated-18-June-2020.pdf
+            tags: [cbcr, guidance]
+            <<: *pdf_http
+          - id: mla_tax_matters_act_consolidated
+            title: "Mutual Legal Assistance (Tax Matters) Act — unofficial consolidation"
+            doc_type: legislation
+            url: https://bviita.vg/wp-content/uploads/2025/09/05.09.25-Unofficial-Consolidation-of-the-Mutual-Legal-AssistanceTax-Matters-Act-.pdf
+            tags: [exchange-of-information, primary]
+            <<: *pdf_http
