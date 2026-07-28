@@ -2,6 +2,7 @@
 .venv
 __pycache__
 data/
+!family/data/
 .playwright-mcp/
 .git
 .gitignore
