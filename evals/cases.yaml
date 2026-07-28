@@ -1,0 +1,50 @@
+# Ground-truth eval cases for the cross/upsell engine.
+# Each case: a synthetic SFO profile + the service keys a JTC relationship manager
+# would expect to be recommended. The harness scores the rule engine's output
+# (deterministic, AI off) against these — precision / recall / hit-rate.
+
+cases:
+  - name: Multi-gen trust client, no governance
+    profile:
+      aum_usd: 800000000
+      generations: 3
+      current_services: [trusts]
+      asset_mix: {private_equity: 25, real_estate: 10, public_equity: 30, cash: 10, alternatives: 25}
+      pain_points: ["succession planning conflict between generations", "no formal governance framework"]
+    expect: [governance, tax_reporting, banking_treasury]
+
+  - name: PE-heavy holding, reporting pain
+    profile:
+      aum_usd: 1500000000
+      generations: 2
+      current_services: [trusts, tax_reporting]
+      asset_mix: {private_equity: 35, real_estate: 15, public_equity: 20, cash: 5, alternatives: 25}
+      pain_points: ["consolidated reporting complexity across entities", "limited visibility into private-equity holdings"]
+    expect: [fund_admin, edge, private_office]
+
+  - name: Luxury assets, mid-size
+    profile:
+      aum_usd: 400000000
+      generations: 2
+      current_services: [trusts, banking_treasury]
+      asset_mix: {private_equity: 20, real_estate: 15, public_equity: 25, luxury: 12, cash: 8, alternatives: 20}
+      pain_points: ["luxury asset (yacht/art) administration overhead"]
+    expect: [luxury_assets, tax_reporting]
+
+  - name: Regulatory burden, AEOI
+    profile:
+      aum_usd: 600000000
+      generations: 1
+      current_services: [trusts, tax_reporting]
+      asset_mix: {private_equity: 18, real_estate: 20, public_equity: 30, cash: 12, alternatives: 20}
+      pain_points: ["regulatory and AEOI (FATCA/CRS) reporting burden"]
+    expect: [compliance]
+
+  - name: Governance in place, next-gen
+    profile:
+      aum_usd: 900000000
+      generations: 3
+      current_services: [trusts, governance]
+      asset_mix: {private_equity: 22, real_estate: 18, public_equity: 28, cash: 12, alternatives: 20}
+      pain_points: ["preparing the next generation for stewardship"]
+    expect: [nextgen_education]
