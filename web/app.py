@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from fasthtml.common import *
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 import taxstore as store
 from web import monitor
@@ -23,7 +23,9 @@ from web import w8form
 from web import email as mailer
 from web import chat_eval
 from web import account_auth
+from web.api import api
 from web.landing import landing_page
+from web.developer import developer_page
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -323,6 +325,17 @@ def establish_session(sess, user_id, email):
 
 app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "fastfund-2026"),
                    pico=False)
+app.mount("/api", api)
+
+
+@rt("/swagger.json", methods=["GET"])
+def swagger_schema():
+    return JSONResponse(api.openapi())
+
+
+@rt("/developers", methods=["GET"])
+def developers():
+    return developer_page()
 
 
 def establish_local_account(sess, account):
@@ -1108,6 +1121,7 @@ def left_pane(sess):
             *admin_links,
             A("📘 FastFund guide", href="/user-guide", cls="navlink"),
             A("🛠 Technical Guide", href="/technical-guide", cls="navlink"),
+            A("⌘ Developers", href="/developers", cls="navlink"),
             A("Sign out", href="/logout", cls="navlink"),
             cls="section"),
         cls="pane left")
