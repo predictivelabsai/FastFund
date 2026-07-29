@@ -22,6 +22,7 @@ from web import aeoi
 from web import w8form
 from web import email as mailer
 from web import chat_eval
+from web import account_auth
 from web.landing import landing_page
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
@@ -322,6 +323,20 @@ def establish_session(sess, user_id, email):
 
 app, rt = fast_app(hdrs=(MARKED, FAVICON), secret_key=os.environ.get("APP_SECRET", "fastfund-2026"),
                    pico=False)
+
+
+def establish_local_account(sess, account):
+    user = store.get_or_create_oauth_user(account["email"], account["name"])
+    if not store.list_teams_for_user(user["id"]):
+        teams = store.list_teams()
+        if teams:
+            store.add_team_member(teams[0]["id"], user["id"], "member")
+    establish_session(sess, user["id"], user["email"])
+
+
+account_auth.register_fasthtml_routes(
+    rt, app_name="FastFund", success_path="/", on_login=establish_local_account
+)
 
 
 # ── Google OAuth (optional — enabled when client id + secret are set) ─────────
@@ -927,6 +942,7 @@ if OAUTH_ENABLED:
                 and not store.get_user_by_email(email)):
             return RedirectResponse("/login?error=This+Google+account+is+not+permitted",
                                     status_code=303)
+        account_auth.accounts.link_google(email, info.get("name") or email)
         user = store.get_or_create_oauth_user(email, info.get("name"))
         # New OAuth users land in the default team so they're never team-less.
         if not store.list_teams_for_user(user["id"]):
