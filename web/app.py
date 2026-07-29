@@ -22,6 +22,7 @@ from web import aeoi
 from web import w8form
 from web import email as mailer
 from web import chat_eval
+from web.landing import landing_page
 from agents import orchestrator
 from agents.tools import document_agent, law_agent, metadata_agent, changes_agent
 from ingest.forms import forms_tree
@@ -1250,6 +1251,8 @@ function signoffW8(){var s=document.getElementById('w8stamp');if(!s)return;
 
 @rt("/")
 def home(sess, sid: int = 0):
+    if LOGIN_REQUIRED and not current_user(sess):
+        return landing_page()
     if (r := require(sess)):
         return r
     messages = store.get_chat_messages(sid) if sid else []
