@@ -1,10 +1,16 @@
 """Public FastFund product landing page."""
+from urllib.parse import quote
+
 from fasthtml.common import *
 
 from .account_auth import AUTH_CSS, AUTH_JS, auth_modal
 
 ACCENT = "#0f766e"
 TINT = "#f0fdfa"
+FAVICON = "data:image/svg+xml," + quote(
+    """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#0f766e"/><path fill="white" d="M16 4 28 16 16 28 4 16Z"/><path fill="#0f766e" d="M11 10h11v4h-7v3h6v4h-6v5h-4Z"/></svg>""",
+    safe="",
+)
 
 CSS = """
 :root{--accent:#0f766e;--tint:#f0fdfa;--ink:#111827;--muted:#667085;--line:#e7eaf0}
@@ -27,6 +33,7 @@ def landing_page():
         Head(Title("FastFund · FastSME"), Meta(charset="utf-8"),
              Meta(name="viewport", content="width=device-width, initial-scale=1"),
              Meta(name="description", content="Connect entities, obligations, documents, service coverage, recommendations, and multijurisdiction tax workflows."),
+             Link(rel="icon", type="image/svg+xml", href=FAVICON),
              Link(rel="preconnect", href="https://fonts.googleapis.com"),
              Link(rel="stylesheet", href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;750&display=swap"),
              Style(CSS + AUTH_CSS)),
