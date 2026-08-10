@@ -14,7 +14,9 @@ import os
 import re
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+
+from database_pool import get_engine
 
 from .base import Storage, utcnow
 
@@ -22,9 +24,7 @@ from .base import Storage, utcnow
 class SqliteStore(Storage):
     def __init__(self, db_url: str | None = None):
         self.db_url = db_url or os.environ.get("DB_URL", "sqlite:///fastfund.db")
-        # check_same_thread=False so the FastHTML app and CLI scrapers can share it.
-        connect_args = {"check_same_thread": False} if self.db_url.startswith("sqlite") else {}
-        self.engine = create_engine(self.db_url, future=True, connect_args=connect_args)
+        self.engine = get_engine(self.db_url)
 
     @contextmanager
     def conn(self):

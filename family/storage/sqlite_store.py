@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+
+from database_pool import get_engine
 
 from .base import Storage, utcnow
 
@@ -37,7 +39,7 @@ def _u(v, default):
 class SqliteStore(Storage):
     def __init__(self, db_url: str | None = None):
         url = db_url or DB_URL
-        self.engine = create_engine(url, future=True)
+        self.engine = get_engine(url)
         self._is_sqlite = url.startswith("sqlite")
 
     # ── helpers ────────────────────────────────────────────────────────────

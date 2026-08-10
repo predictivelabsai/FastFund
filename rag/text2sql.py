@@ -13,8 +13,9 @@ from __future__ import annotations
 import os
 import re
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
+from database_pool import get_engine
 from rag import llm
 
 DB_URL = os.environ.get("DB_URL", "sqlite:///fastfund.db")
@@ -117,14 +118,10 @@ Question: {question}
 """
 
 _DANGEROUS = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|ATTACH|PRAGMA)\b", re.I)
-_engine = None
 
 
 def _get_engine():
-    global _engine
-    if _engine is None:
-        _engine = create_engine(DB_URL, future=True)
-    return _engine
+    return get_engine(DB_URL)
 
 
 def _extract_sql(raw: str) -> str | None:
